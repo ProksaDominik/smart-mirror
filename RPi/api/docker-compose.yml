@@ -1,0 +1,59 @@
+# Kickoff stack: PostgreSQL + pgAdmin + FastAPI (linked to DB).
+# From this folder:
+#   cp .env.example .env
+#   docker compose up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ctai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ctai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ctai}
+      POSTGRES_DB: ${POSTGRES_DB:-projectone}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-ctai} -d ${POSTGRES_DB:-projectone}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ctai-pgadmin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@howest.be}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-ctai}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+  api:
+    build: .
+    container_name: ctai-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  pgadmin_data:

@@ -1,0 +1,10 @@
+# Training data and Ultralytics outputs — do not commit to GitHub Classroom
+datasets/
+runs/
+*.cache
+wandb/
+__pycache__/
+.ipynb_checkpoints/
+
+# Optional: ignore exported weights here; copy best.pt to RPi/ai/ manually
+# *.pt

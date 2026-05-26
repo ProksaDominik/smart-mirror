@@ -1,0 +1,11 @@
+picamera2
+mediapipe
+requests
+gradio
+numpy
+spidev
+supervision
+rpi-lgpio
+smbus2
+ultralytics
+opencv-python-headless

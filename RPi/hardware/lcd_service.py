@@ -34,8 +34,25 @@ class I2CLCD:
         self._init_lcd()
 
     def _init_lcd(self) -> None:
-        # TODO: initialize LCD
-        pass
+        time.sleep(0.05)
+        # Wake up the HD44780 controller (3× enable toggle before 4-bit mode)
+        self._toggle_enable(0x30)
+        time.sleep(0.005)
+        self._toggle_enable(0x30)
+        time.sleep(0.001)
+        self._toggle_enable(0x30)
+        time.sleep(0.001)
+        # Switch to 4-bit mode
+        self._toggle_enable(0x20)
+        time.sleep(0.001)
+        # Function set: 4-bit, 2 lines, 5×8 font
+        self.send_command(0x28)
+        # Display on, cursor off, blink off
+        self.send_command(0x0C)
+        # Entry mode: auto-increment, no display shift
+        self.send_command(0x06)
+        # Clear display
+        self.clear()
 
     def _toggle_enable(self, bits: int) -> None:
         time.sleep(self.E_DELAY)
@@ -59,8 +76,11 @@ class I2CLCD:
         time.sleep(0.002)
 
     def message(self, text: str, line: int) -> None:
-        # TODO: send message to LCD (multiple lines)
-        pass
+        addr = self.LINE_1 if line == 1 else self.LINE_2
+        self.send_command(addr)
+        text = text[: self.width].ljust(self.width, " ")
+        for char in text:
+            self._send_byte(ord(char), self.LCD_CHR)
 
 
 class LCDService:

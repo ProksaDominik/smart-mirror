@@ -1,12 +1,12 @@
 # Project Information
 
-**FIRST NAME LAST NAME:** A B  
+**FIRST NAME LAST NAME:** Dominik Proksa   
 
-**Sparring Partner:** C D  
+**Sparring Partner:** Michal Heles
 
-**Project Title:** F  
+**Project Title:** smart mirror
 
-**Project Summary in max 10 words:** E  
+**Project Summary in max 10 words:** SmartMirror is an AI-powered Raspberry Pi mirror that uses YOLO face recognition to identify users and instantly display their personalised time, weather, and Google Calendar to-do list on a 10.1-inch LCD — giving busy people all the info they need to start their day, hands-free, without touching their phone.
 
 # Tips for Feedback Conversations
 
@@ -32,29 +32,30 @@
 
 # Feedforward Conversations
 
-## Conversation 1 (Date: xx/xx/2026)
+## Conversation 1 (Date: 30./05/2026)
 
-Lecturer:
-
-Questions for this conversation:
-
-- Question 1: V
-
-This is the feedback on my questions.
-
-- Feedback 1: G
-
-## Conversation 2 (Date: xx/xx/2026)
-
-Lecturer:
+Lecturer: Geert
 
 Questions for this conversation:
 
-- Question 1: V
+- Question 1: basically what is the best option to do my hardware. 
 
 This is the feedback on my questions.
 
-- Feedback 1: G
+- Feedback 1: lcd display, on the lcd display there will be acrylic plexiglass and on that there will be one way mirror film. 
+
+## Conversation 2 (Date: 05/06/2026)
+
+Lecturer:
+
+Questions for this conversation: 
+
+- Question 1: How to close it and what to use for making the frame, and how to do the frame. 
+
+This is the feedback on my questions.
+
+- Feedback 1: frame will be made out of wood and enclosure from acrylic pvc.
+
 
 ## Conversation 3 (Date: xx/xx/2026)
 

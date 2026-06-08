@@ -82,6 +82,7 @@ class InferenceHandlers:
         yolo_iou: float,
         ai_history: list[dict[str, Any]],
         error_history: list[dict[str, Any]],
+        auto_detect: bool = False,
     ):
         self._ctx.runtime.sync_gradio_state(
             source_type,
@@ -94,8 +95,29 @@ class InferenceHandlers:
             error_history,
         )
         gpio_model = self._ctx.runtime.take_gpio_model()
-        if gpio_model is None:
+        if gpio_model is None and not auto_detect:
             return self._gpio_dispatch_no_op()
+
+        if gpio_model is None and auto_detect:
+            snap = self._ctx.runtime.read_inference_snapshot()
+            try:
+                src_rgb = pick_source_frame(
+                    self._ctx.providers,
+                    snap.source_type,
+                    snap.latest_capture_rgb,
+                    snap.upload_rgb,
+                    snap.browser_webcam_rgb,
+                )
+                result = self._ctx.models[MODEL_YOLO].run(src_rgb, conf=snap.yolo_conf, iou=snap.yolo_iou)
+                counts = result.payload.get("counts", {})
+                summary = "\n".join(f"{name}: {cnt}" for name, cnt in counts.items()) if counts else "No detections"
+                return (
+                    result.annotated_rgb,
+                    summary,
+                    *[gr.update()] * (_GPIO_DISPATCH_OUTPUT_COUNT - 2),
+                )
+            except Exception:
+                return self._gpio_dispatch_no_op()
 
         snap = self._ctx.runtime.read_inference_snapshot()
         print(f"[GPIO] Running inference for model={gpio_model!r}")

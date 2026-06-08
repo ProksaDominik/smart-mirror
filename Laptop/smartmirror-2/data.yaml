@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['JP', 'Joao', 'Liviu', 'Lloyd', 'Michal', 'Radu']
+
+roboflow:
+  workspace: ai-model-training-rndre
+  project: smartmirror-ycsnp
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ai-model-training-rndre/smartmirror-ycsnp/dataset/2

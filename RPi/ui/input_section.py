@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from config import AppConfig
-from inputs import INPUT_UPLOAD, RESOLUTION_OPTIONS, SPINNER_FRAMES, input_radio_choices
+from inputs import INPUT_CSI_CAMERA, INPUT_UPLOAD, RESOLUTION_OPTIONS, SPINNER_FRAMES, input_radio_choices
 
 
 @dataclass
@@ -46,7 +46,7 @@ def build_input_section(cfg: AppConfig) -> InputSection:
     perf_state = gr.State({"spinner_idx": -1, "label": SPINNER_FRAMES[0]})
 
     gr.Markdown("### Input")
-    input_source = gr.Radio(choices=input_radio_choices(), value=INPUT_UPLOAD, label="Input source")
+    input_source = gr.Radio(choices=input_radio_choices(), value=INPUT_CSI_CAMERA, label="Input source")
     rpi_note = gr.Markdown("", visible=False)
     upload_input = gr.Image(type="numpy", label="Upload image (browser)", visible=True)
     browser_webcam_input = gr.Image(type="numpy", sources=["webcam"], label="Browser webcam", visible=False)

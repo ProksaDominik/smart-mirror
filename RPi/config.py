@@ -10,8 +10,9 @@ class AppConfig:
 
     # USB camera: run `python list_cameras.py` on the Pi, then paste config_value here.
     # Substring match works (e.g. "usb-OmniVision"). Leave empty to use camera_index.
-    camera_device: str = "usb-046d_C922_Pro_Stream_Webcam_13AC026F-video-index0"
-    camera_index: int = 8  # fallback when camera_device is ""
+    # On Windows / dev machine leave camera_device="" so camera_index is used instead.
+    camera_device: str = ""
+    camera_index: int = 0  # 0 = default webcam on Windows; set to correct index on RPi
     csi_buffer_resolution: str = "1280x720"
     # Picamera2 "RGB888" buffers are often BGR-ordered; set False if colors look wrong the other way.
     csi_bgr_to_rgb: bool = True

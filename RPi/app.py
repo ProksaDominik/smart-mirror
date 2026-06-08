@@ -1,20 +1,18 @@
-"""RPi Local Multi-Model Dashboard — entry point."""
+"""SmartMirror — entry point."""
 
 from __future__ import annotations
 
 from config import AppConfig
 from services.bootstrap import bootstrap_app, shutdown_app
-from ui.dashboard import build_dashboard, launch_dashboard
+from ui.smartmirror_dashboard import build_smartmirror_dashboard, launch_smartmirror_dashboard
 
 
 def main() -> None:
-    # --- init ---
     ctx = bootstrap_app(AppConfig())
-    demo, _inference = build_dashboard(ctx)
+    demo = build_smartmirror_dashboard(ctx)
 
-    # --- gradio run ---
     try:
-        launch_dashboard(ctx, demo)
+        launch_smartmirror_dashboard(ctx, demo)
     finally:
         shutdown_app(ctx)
 

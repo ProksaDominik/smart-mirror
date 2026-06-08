@@ -17,6 +17,7 @@ class ModelSection:
     yolo_run: gr.Button
     yolo_output: gr.Image
     yolo_count_output: gr.Textbox
+    auto_detect: gr.Checkbox
     pose_run: gr.Button
     pose_output: gr.Image
 
@@ -60,8 +61,9 @@ def build_model_section() -> ModelSection:
                 yolo_conf = gr.Slider(0.0, 1.0, value=0.25, step=0.05, label="Confidence threshold")
                 yolo_iou = gr.Slider(0.0, 1.0, value=0.45, step=0.05, label="IoU threshold")
             yolo_run = gr.Button("Run Drone YOLO", variant="primary")
+            auto_detect = gr.Checkbox(label="Continuous detection (live camera)", value=False)
             yolo_output = gr.Image(label="YOLO output", type="numpy")
-            yolo_count_output = gr.Textbox(label="Drone count summary", lines=2)
+            yolo_count_output = gr.Textbox(label="Detection summary", lines=2)
 
         with gr.TabItem("MediaPipe Pose", id="pose"):
             pose_run = gr.Button("Run Pose Detection", variant="primary")
@@ -75,6 +77,7 @@ def build_model_section() -> ModelSection:
         yolo_run=yolo_run,
         yolo_output=yolo_output,
         yolo_count_output=yolo_count_output,
+        auto_detect=auto_detect,
         pose_run=pose_run,
         pose_output=pose_output,
     )

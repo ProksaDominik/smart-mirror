@@ -149,6 +149,7 @@ def _wire_callbacks(inp, model, out, input_handlers, inference, history) -> None
             model.yolo_iou,
             out.ai_history_state,
             out.error_history_state,
+            model.auto_detect,
         ],
         outputs=[
             model.yolo_output,

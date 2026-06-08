@@ -46,7 +46,7 @@ This is the feedback on my questions.
 
 ## Conversation 2 (Date: 05/06/2026)
 
-Lecturer:
+Lecturer: Pitrijan 
 
 Questions for this conversation: 
 
@@ -57,11 +57,10 @@ This is the feedback on my questions.
 - Feedback 1: frame will be made out of wood and enclosure from acrylic pvc.
 
 
-## Conversation 3 (Date: xx/xx/2026)
+## Conversation 3 (Date: 00/00/2026)
 
-Lecturer:
-
-Questions for this conversation:
+Lecturer: 
+Questions for this conversation: 
 
 - [x] Question 1: V
 

@@ -1,7 +1,8 @@
-"""SmartMirror Gradio dashboard — assembles all three pages.
+"""SmartMirror Gradio dashboard — assembles all four pages.
 
 Tabs:
-  Display        — live mirror screen (clock · weather · face recognition · schedule)
+  Display        — clock/schedule | webcam + YOLO detection | weather/status
+  Mirror         — narrow side panels + plain black center
   Getting Started— onboarding wizard with step-status cards
   Operating      — to-do list · calendar sync · mirror settings
 """
@@ -11,58 +12,65 @@ from __future__ import annotations
 import gradio as gr
 
 from hardware.setup import start_gpio
-from models.registry import MODEL_YOLO
 from ui.context import AppContext
 from ui.sm_about import build_about_tab, wire_about_callbacks
 from ui.sm_display import (
     SAMPLE_EVENTS,
+    _render_left,
+    _render_right,
     build_display_tab,
     fetch_weather,
-    render_display,
     wire_display_callbacks,
+)
+from ui.sm_display_simple import (
+    build_display_simple_tab,
+    render_display_simple,
+    wire_display_simple_callbacks,
 )
 from ui.sm_operating import build_operating_tab, wire_operating_callbacks
 from ui.smartmirror_theme import SM_CSS
 
+_SM_THEME = gr.themes.Base(
+    primary_hue="cyan",
+    secondary_hue="purple",
+    font=gr.themes.GoogleFont("Inter"),
+).set(
+    body_background_fill="#0A0A0F",
+    body_text_color="#ffffff",
+    background_fill_primary="#0A0A0F",
+    background_fill_secondary="#12121E",
+    border_color_primary="#1E1E2E",
+    color_accent_soft="#00F5FF",
+    input_background_fill="#12121E",
+    button_primary_background_fill="#00F5FF",
+    button_primary_text_color="#000000",
+    block_label_text_color="#8B8BA8",
+)
+
 
 def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
-    with gr.Blocks(
-        title="SmartMirror",
-        css=SM_CSS,
-        theme=gr.themes.Base(
-            primary_hue="cyan",
-            secondary_hue="purple",
-            font=gr.themes.GoogleFont("Inter"),
-        ).set(
-            body_background_fill="#0A0A0F",
-            body_text_color="#ffffff",
-            background_fill_primary="#0A0A0F",
-            background_fill_secondary="#12121E",
-            border_color_primary="#1E1E2E",
-            color_accent_soft="#00F5FF",
-            input_background_fill="#12121E",
-            button_primary_background_fill="#00F5FF",
-            button_primary_text_color="#000000",
-            block_label_text_color="#8B8BA8",
-        ),
-    ) as demo:
+    with gr.Blocks(title="SmartMirror") as demo:
 
         with gr.Tabs():
             # ── Tab 1: Display ────────────────────────────────────────────────
             display_comps = build_display_tab(ctx)
 
-            # ── Tab 2: Getting Started ────────────────────────────────────────
+            # ── Tab 2: Mirror ─────────────────────────────────────────────────
+            mirror_comps = build_display_simple_tab(ctx)
+
+            # ── Tab 3: Getting Started ────────────────────────────────────────
             about_comps = build_about_tab(ctx)
 
-            # ── Tab 3: Operating ─────────────────────────────────────────────
+            # ── Tab 4: Operating ─────────────────────────────────────────────
             operating_comps = build_operating_tab(ctx)
 
         # ── Wire callbacks ────────────────────────────────────────────────────
         wire_display_callbacks(display_comps, ctx)
+        wire_display_simple_callbacks(mirror_comps, ctx)
         wire_about_callbacks(about_comps, ctx)
         wire_operating_callbacks(operating_comps, ctx)
 
-        # ── Seed initial weather + about status on load ───────────────────────
+        # ── Seed initial weather on load ──────────────────────────────────────
         def _on_load():
             from ui.sm_about import (
                 _calendar_token_exists,
@@ -73,44 +81,44 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             weather = fetch_weather()
             status = {
                 "camera": False, "led": "Green",
-                "cloud": False, "weather_api": weather is not None,
-                "wifi": True,
+                "cloud": False, "weather_api": weather is not None, "wifi": True,
             }
-            display_html = render_display(
-                recognition={"name": None, "conf": 0.0},
-                weather_data=weather,
-                events=SAMPLE_EVENTS,
-                status=status,
+            display_right = _render_right(weather, status)
+            mirror_left, mirror_right = render_display_simple(
+                weather_data=weather, events=SAMPLE_EVENTS
             )
-            cam_ok   = _camera_ready(ctx)
-            photos   = _face_dataset_count(ctx.base_dir)
-            cal_ok   = _calendar_token_exists(ctx.base_dir)
+            cam_ok     = _camera_ready(ctx)
+            photos     = _face_dataset_count(ctx.base_dir)
+            cal_ok     = _calendar_token_exists(ctx.base_dir)
             about_html = render_about(cam_ok, photos, cal_ok)
-            return display_html, weather, status, about_html
+            return display_right, weather, status, mirror_left, mirror_right, weather, about_html
 
         demo.load(
             fn=_on_load,
             inputs=None,
             outputs=[
-                display_comps["display_html"],
+                display_comps["right_html"],
                 display_comps["weather_state"],
                 display_comps["status_state"],
+                mirror_comps["left_html"],
+                mirror_comps["right_html"],
+                mirror_comps["weather_state"],
                 about_comps["about_html"],
             ],
             show_progress="hidden",
         )
 
-        # ── Wire Operating events into Display tab ────────────────────────────
-        # When the user syncs calendar in Operating, update the Display schedule too.
+        # ── Wire Operating calendar sync into Display + Mirror ────────────────
         operating_comps["events_state"].change(
-            fn=lambda ev, w, r, st: render_display(r, w, ev, st),
-            inputs=[
-                operating_comps["events_state"],
-                display_comps["weather_state"],
-                display_comps["recognition_state"],
-                display_comps["status_state"],
-            ],
-            outputs=[display_comps["display_html"]],
+            fn=lambda ev: _render_left(ev),
+            inputs=[operating_comps["events_state"]],
+            outputs=[display_comps["left_html"]],
+            show_progress="hidden",
+        )
+        operating_comps["events_state"].change(
+            fn=lambda ev, w: render_display_simple(w, ev),
+            inputs=[operating_comps["events_state"], mirror_comps["weather_state"]],
+            outputs=[mirror_comps["left_html"], mirror_comps["right_html"]],
             show_progress="hidden",
         )
 
@@ -118,7 +126,7 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
     from ui.inference_handlers import InferenceHandlers
     from ui.history import HistoryStore
 
-    history  = HistoryStore()
+    history    = HistoryStore()
     _inference = InferenceHandlers(ctx, history)
 
     ctx.gpio = start_gpio(
@@ -135,4 +143,6 @@ def launch_smartmirror_dashboard(ctx: AppContext, demo: gr.Blocks) -> None:
         server_name=ctx.cfg.gradio_host,
         server_port=ctx.cfg.gradio_port,
         show_error=True,
+        theme=_SM_THEME,
+        css=SM_CSS,
     )

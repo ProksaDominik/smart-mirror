@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AppConfig:
     gradio_host: str = "0.0.0.0"
-    gradio_port: int = 7860
+    gradio_port: int = 8500
 
     # USB camera: run `python list_cameras.py` on the Pi, then paste config_value here.
     # Substring match works (e.g. "usb-OmniVision"). Leave empty to use camera_index.

@@ -48,6 +48,40 @@ _SM_THEME = gr.themes.Base(
 )
 
 
+_CLOCK_JS = """
+() => {
+    function smStartClocks() {
+        var D=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        var M=['January','February','March','April','May','June','July','August',
+               'September','October','November','December'];
+        function p(n){return String(n).padStart(2,'0');}
+        function tick(){
+            var n=new Date(), h=n.getHours(), m=n.getMinutes();
+            var ts=p(h)+':'+p(m);
+            ['sm-time','sm2-time'].forEach(function(id){
+                var el=document.getElementById(id); if(el) el.textContent=ts;
+            });
+            var ds=D[n.getDay()]+', '+p(n.getDate())+' '+M[n.getMonth()]+' '+n.getFullYear();
+            ['sm-date','sm2-date'].forEach(function(id){
+                var el=document.getElementById(id); if(el) el.textContent=ds;
+            });
+            var ap=h>=12?'PM':'AM';
+            ['sm-ampm','sm2-ampm'].forEach(function(id){
+                var el=document.getElementById(id); if(el) el.textContent=ap;
+            });
+        }
+        if(window._smClock) clearInterval(window._smClock);
+        tick();
+        window._smClock=setInterval(tick,1000);
+    }
+    smStartClocks();
+    // Re-run after Gradio finishes rendering components
+    setTimeout(smStartClocks, 1000);
+    setTimeout(smStartClocks, 3000);
+}
+"""
+
+
 def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
     with gr.Blocks(title="SmartMirror") as demo:
 
@@ -74,7 +108,6 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
         def _on_load():
             from ui.sm_about import (
                 _calendar_token_exists,
-                _camera_ready,
                 _face_dataset_count,
                 render_about,
             )
@@ -87,10 +120,9 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             mirror_left, mirror_right = render_display_simple(
                 weather_data=weather, events=SAMPLE_EVENTS
             )
-            cam_ok     = _camera_ready(ctx)
             photos     = _face_dataset_count(ctx.base_dir)
             cal_ok     = _calendar_token_exists(ctx.base_dir)
-            about_html = render_about(cam_ok, photos, cal_ok)
+            about_html = render_about(False, photos, cal_ok)
             return display_right, weather, status, mirror_left, mirror_right, weather, about_html
 
         demo.load(
@@ -107,6 +139,9 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             ],
             show_progress="hidden",
         )
+
+        # ── Start clock via JS on page load ───────────────────────────────────
+        demo.load(fn=None, js=_CLOCK_JS)
 
         # ── Wire Operating calendar sync into Display + Mirror ────────────────
         operating_comps["events_state"].change(
@@ -129,17 +164,20 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
     history    = HistoryStore()
     _inference = InferenceHandlers(ctx, history)
 
-    ctx.gpio = start_gpio(
-        ctx.cfg,
-        on_short_press=_inference.on_gpio_short_press,
-        on_hold_press=_inference.shutdown_now,
-    )
+    try:
+        ctx.gpio = start_gpio(
+            ctx.cfg,
+            on_short_press=_inference.on_gpio_short_press,
+            on_hold_press=_inference.shutdown_now,
+        )
+    except Exception as exc:
+        print(f"[GPIO] Could not initialize button (pin {ctx.cfg.shutdown_button_pin}): {exc} — running without hardware button")
 
     return demo
 
 
 def launch_smartmirror_dashboard(ctx: AppContext, demo: gr.Blocks) -> None:
-    demo.queue().launch(
+    demo.queue(default_concurrency_limit=4).launch(
         server_name=ctx.cfg.gradio_host,
         server_port=ctx.cfg.gradio_port,
         show_error=True,

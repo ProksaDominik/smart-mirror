@@ -181,7 +181,7 @@ def render_about(
             Complete these steps to activate your SmartMirror</div>
 
         {_step_card("01", "Connect Your Device",
-            "Power on the Raspberry Pi and connect the 10.1\" LCD via HDMI. "
+            'Power on the Raspberry Pi and connect the 10.1" LCD via HDMI. '
             "Attach the USB camera module and verify the connection.",
             step1)}
 

@@ -73,14 +73,9 @@ footer { display: none !important; }
 }
 
 /* ── Remove default Gradio block chrome ───────────────────────────────────── */
-.block,
-.gap,
-.form {
+.block {
     background: transparent !important;
     border: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    gap: 0 !important;
     box-shadow: none !important;
 }
 

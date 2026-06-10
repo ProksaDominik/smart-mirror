@@ -49,24 +49,7 @@ def _render_left(events: list[dict]) -> str:
                     color:{C_CYAN};margin-bottom:8px;">Today's Schedule</div>
         {events_html or f'<div style="color:{C_MUTED};font-size:11px;">No events today.</div>'}
     </div>
-</div>
-<script>
-(function(){{
-    if(window._sm2Clock)clearInterval(window._sm2Clock);
-    var D=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    var M=['January','February','March','April','May','June','July','August','September','October','November','December'];
-    function p(n){{return String(n).padStart(2,'0');}}
-    function tick(){{
-        var n=new Date(),h=n.getHours(),m=n.getMinutes();
-        var t=document.getElementById('sm2-time');if(t)t.textContent=p(h)+':'+p(m);
-        var d=document.getElementById('sm2-date');
-        if(d)d.textContent=D[n.getDay()]+', '+p(n.getDate())+' '+M[n.getMonth()]+' '+n.getFullYear();
-        var a=document.getElementById('sm2-ampm');if(a)a.textContent=h>=12?'PM':'AM';
-    }}
-    tick();
-    window._sm2Clock=setInterval(tick,1000);
-}})();
-</script>"""
+</div>"""
 
 
 def _render_right(weather_data: dict | None) -> str:
@@ -129,9 +112,9 @@ def render_display_simple(
 
 def build_display_simple_tab(ctx: AppContext) -> dict:
     with gr.TabItem("Mirror", id="mirror"):
-        with gr.Row(equal_height=True):
+        with gr.Row():
             with gr.Column(min_width=_PANEL_W, scale=0):
-                left_html = gr.HTML(_render_left(SAMPLE_EVENTS))
+                left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
             with gr.Column(scale=3):
                 gr.HTML(
                     '<div style="background:#000;height:100%;min-height:80vh;"></div>'

@@ -7,7 +7,6 @@ Right panel: Google Calendar sync card + mirror settings (brightness, refresh,
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from datetime import date, datetime, timedelta
@@ -16,6 +15,7 @@ from typing import Any
 
 import gradio as gr
 
+import db
 from ui.context import AppContext
 from ui.sm_display import SAMPLE_EVENTS, fetch_weather
 from ui.smartmirror_theme import (
@@ -35,22 +35,16 @@ from ui.smartmirror_theme import (
 
 # ── Task persistence ──────────────────────────────────────────────────────────
 
-def _tasks_path(base_dir: Path) -> Path:
-    p = base_dir / "data" / "tasks.json"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
-
 def load_tasks(base_dir: Path) -> list[dict]:
     try:
-        return json.loads(_tasks_path(base_dir).read_text())
+        return db.load_tasks()
     except Exception:
         return []
 
 
 def save_tasks(base_dir: Path, tasks: list[dict]) -> None:
     try:
-        _tasks_path(base_dir).write_text(json.dumps(tasks, indent=2))
+        db.save_all_tasks(tasks)
     except Exception:
         pass
 

@@ -179,24 +179,7 @@ def _render_left(events: list[dict]) -> str:
                     color:{C_CYAN};margin-bottom:12px;">Today's Schedule</div>
         {events_html or f'<div style="color:{C_MUTED};font-size:14px;">No events today.</div>'}
     </div>
-</div>
-<script>
-(function(){{
-    if(window._smClock)clearInterval(window._smClock);
-    var D=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    var M=['January','February','March','April','May','June','July','August','September','October','November','December'];
-    function p(n){{return String(n).padStart(2,'0');}}
-    function tick(){{
-        var n=new Date(),h=n.getHours(),m=n.getMinutes();
-        var t=document.getElementById('sm-time');if(t)t.textContent=p(h)+':'+p(m);
-        var d=document.getElementById('sm-date');
-        if(d)d.textContent=D[n.getDay()]+', '+p(n.getDate())+' '+M[n.getMonth()]+' '+n.getFullYear();
-        var a=document.getElementById('sm-ampm');if(a)a.textContent=h>=12?'PM':'AM';
-    }}
-    tick();
-    window._smClock=setInterval(tick,1000);
-}})();
-</script>"""
+</div>"""
 
 
 def _render_right(weather_data: dict | None, status: dict) -> str:
@@ -347,23 +330,15 @@ def build_display_tab(ctx: AppContext) -> dict:
     }
 
     with gr.TabItem("Display", id="display"):
-        with gr.Row(equal_height=True):
+        with gr.Row():
 
             # LEFT: clock + schedule
             with gr.Column(scale=1):
-                left_html = gr.HTML(_render_left(SAMPLE_EVENTS))
+                left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
 
-            # CENTER: webcam input + annotated detection output
+            # CENTER: Pi camera feed + YOLO detection (server-side, no browser webcam)
             with gr.Column(scale=2):
-                webcam = gr.Image(
-                    sources=["webcam"],
-                    streaming=True,
-                    type="pil",
-                    label="Camera",
-                    show_label=False,
-                )
                 detection_img = gr.Image(
-                    streaming=True,
                     show_label=False,
                     container=False,
                 )
@@ -373,6 +348,7 @@ def build_display_tab(ctx: AppContext) -> dict:
                     show_label=False,
                     interactive=False,
                 )
+                camera_timer = gr.Timer(value=1.0, active=True)
 
             # RIGHT: weather + system status
             with gr.Column(scale=1):
@@ -383,18 +359,12 @@ def build_display_tab(ctx: AppContext) -> dict:
         status_state  = gr.State(initial_status)
         weather_timer = gr.Timer(value=300.0, active=True)
 
-    webcam.stream(
-        fn=lambda img: _predict_frame(img, ctx),
-        inputs=[webcam],
-        outputs=[detection_img, detected_name],
-        time_limit=60,
-        stream_every=0.1,
-        show_progress="hidden",
-    )
-
     return {
         "left_html":     left_html,
         "right_html":    right_html,
+        "detection_img": detection_img,
+        "detected_name": detected_name,
+        "camera_timer":  camera_timer,
         "weather_state": weather_state,
         "events_state":  events_state,
         "status_state":  status_state,
@@ -403,6 +373,28 @@ def build_display_tab(ctx: AppContext) -> dict:
 
 
 def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
+    # 1-second camera tick — read Pi camera and run YOLO
+    def _camera_tick():
+        from inputs.registry import INPUT_RPI_CAMERA
+        provider = ctx.providers.get(INPUT_RPI_CAMERA)
+        if provider is None:
+            return gr.update(), gr.update()
+        result = provider.sync_preview("640x480", 6.0, None, None, None)
+        frame = result.frame_rgb
+        if frame is None:
+            return gr.update(), gr.update()
+        img_pil = Image.fromarray(frame)
+        return _predict_frame(img_pil, ctx)
+
+    comps["camera_timer"].tick(
+        fn=_camera_tick,
+        inputs=None,
+        outputs=[comps["detection_img"], comps["detected_name"]],
+        show_progress="hidden",
+        concurrency_id="webcam",
+        concurrency_limit=1,
+    )
+
     # 5-minute weather tick — only the right panel
     def _weather_tick(w, st):
         new_w  = fetch_weather()

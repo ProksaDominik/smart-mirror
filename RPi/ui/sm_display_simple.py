@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import gradio as gr
 
 from ui.context import AppContext
@@ -25,11 +23,6 @@ _PANEL_W = 220  # px
 
 
 def _render_left(events: list[dict]) -> str:
-    now = datetime.now()
-    time_str = now.strftime("%H:%M")
-    date_str = now.strftime("%A, %d %B %Y")
-    ampm     = now.strftime("%p")
-
     events_html = ""
     for ev in events[:6]:
         t      = ev.get("time", "")
@@ -46,17 +39,34 @@ def _render_left(events: list[dict]) -> str:
     return f"""
 <div style="font-family:'Inter',sans-serif;background:#000;height:100%;
             padding:24px 16px;color:#fff;border-right:1px solid {C_BORDER};">
-    <div style="font-size:52px;font-weight:300;letter-spacing:-2px;line-height:1;">{time_str}</div>
-    <div style="font-size:11px;color:{C_MUTED};margin-top:6px;">{date_str}</div>
-    <div style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
+    <div id="sm2-time" style="font-size:52px;font-weight:300;letter-spacing:-2px;line-height:1;">--:--</div>
+    <div id="sm2-date" style="font-size:11px;color:{C_MUTED};margin-top:6px;"></div>
+    <div id="sm2-ampm" style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
                 font-size:9px;padding:1px 7px;border-radius:3px;
-                margin-top:6px;letter-spacing:.06em;">{ampm}</div>
+                margin-top:6px;letter-spacing:.06em;"></div>
     <div style="margin-top:20px;">
         <div style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;
                     color:{C_CYAN};margin-bottom:8px;">Today's Schedule</div>
         {events_html or f'<div style="color:{C_MUTED};font-size:11px;">No events today.</div>'}
     </div>
-</div>"""
+</div>
+<script>
+(function(){{
+    if(window._sm2Clock)clearInterval(window._sm2Clock);
+    var D=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    var M=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    function p(n){{return String(n).padStart(2,'0');}}
+    function tick(){{
+        var n=new Date(),h=n.getHours(),m=n.getMinutes();
+        var t=document.getElementById('sm2-time');if(t)t.textContent=p(h)+':'+p(m);
+        var d=document.getElementById('sm2-date');
+        if(d)d.textContent=D[n.getDay()]+', '+p(n.getDate())+' '+M[n.getMonth()]+' '+n.getFullYear();
+        var a=document.getElementById('sm2-ampm');if(a)a.textContent=h>=12?'PM':'AM';
+    }}
+    tick();
+    window._sm2Clock=setInterval(tick,1000);
+}})();
+</script>"""
 
 
 def _render_right(weather_data: dict | None) -> str:
@@ -131,7 +141,6 @@ def build_display_simple_tab(ctx: AppContext) -> dict:
 
         weather_state = gr.State(None)
         events_state  = gr.State(list(SAMPLE_EVENTS))
-        clock_timer   = gr.Timer(value=1.0,   active=True)
         weather_timer = gr.Timer(value=300.0, active=True)
 
     return {
@@ -139,19 +148,11 @@ def build_display_simple_tab(ctx: AppContext) -> dict:
         "right_html":    right_html,
         "weather_state": weather_state,
         "events_state":  events_state,
-        "clock_timer":   clock_timer,
         "weather_timer": weather_timer,
     }
 
 
 def wire_display_simple_callbacks(comps: dict, ctx: AppContext) -> None:
-    comps["clock_timer"].tick(
-        fn=lambda ev: _render_left(ev),
-        inputs=[comps["events_state"]],
-        outputs=[comps["left_html"]],
-        show_progress="hidden",
-    )
-
     def _weather_tick(w, ev):
         new_w = fetch_weather()
         return _render_right(new_w), new_w

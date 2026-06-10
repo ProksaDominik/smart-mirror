@@ -15,7 +15,7 @@ class YoloDroneModel:
 
     def run(self, frame_rgb: np.ndarray, conf: float, iou: float) -> InferenceResult:
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-        results = self._model.predict(frame_bgr, conf=conf, iou=iou, imgsz=640, verbose=False)
+        results = self._model.predict(frame_bgr, conf=conf, iou=iou, imgsz=640, agnostic_nms=True, verbose=False)
         result = results[0]
         annotated_bgr = result.plot()
         annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)

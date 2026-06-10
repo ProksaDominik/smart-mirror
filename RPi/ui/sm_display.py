@@ -148,11 +148,6 @@ def _day_abbr(date_str: str) -> str:
 # ── Panel renderers ───────────────────────────────────────────────────────────
 
 def _render_left(events: list[dict]) -> str:
-    now = datetime.now()
-    time_str = now.strftime("%H:%M")
-    date_str = now.strftime("%A, %d %B %Y")
-    ampm     = now.strftime("%p")
-
     events_html = ""
     for ev in events[:6]:
         t      = ev.get("time", "")
@@ -174,18 +169,34 @@ def _render_left(events: list[dict]) -> str:
     return f"""
 <div style="font-family:'Inter',sans-serif;background:#0A0A0F;
             height:100%;padding:32px 24px;color:#fff;">
-    <div style="font-size:88px;font-weight:300;color:#fff;letter-spacing:-3px;line-height:1;">
-        {time_str}</div>
-    <div style="font-size:16px;color:{C_MUTED};margin-top:10px;">{date_str}</div>
-    <div style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
+    <div id="sm-time" style="font-size:88px;font-weight:300;color:#fff;letter-spacing:-3px;line-height:1;">--:--</div>
+    <div id="sm-date" style="font-size:16px;color:{C_MUTED};margin-top:10px;"></div>
+    <div id="sm-ampm" style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
                 font-size:11px;padding:2px 10px;border-radius:4px;
-                margin-top:10px;letter-spacing:.06em;">{ampm}</div>
+                margin-top:10px;letter-spacing:.06em;"></div>
     <div style="margin-top:32px;">
         <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;
                     color:{C_CYAN};margin-bottom:12px;">Today's Schedule</div>
         {events_html or f'<div style="color:{C_MUTED};font-size:14px;">No events today.</div>'}
     </div>
-</div>"""
+</div>
+<script>
+(function(){{
+    if(window._smClock)clearInterval(window._smClock);
+    var D=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    var M=['January','February','March','April','May','June','July','August','September','October','November','December'];
+    function p(n){{return String(n).padStart(2,'0');}}
+    function tick(){{
+        var n=new Date(),h=n.getHours(),m=n.getMinutes();
+        var t=document.getElementById('sm-time');if(t)t.textContent=p(h)+':'+p(m);
+        var d=document.getElementById('sm-date');
+        if(d)d.textContent=D[n.getDay()]+', '+p(n.getDate())+' '+M[n.getMonth()]+' '+n.getFullYear();
+        var a=document.getElementById('sm-ampm');if(a)a.textContent=h>=12?'PM':'AM';
+    }}
+    tick();
+    window._smClock=setInterval(tick,1000);
+}})();
+</script>"""
 
 
 def _render_right(weather_data: dict | None, status: dict) -> str:
@@ -286,21 +297,45 @@ def render_display(
 
 # ── YOLO prediction ───────────────────────────────────────────────────────────
 
+# Hold last good annotated frame for up to N empty frames (~1 s at 10 fps)
+_HOLD_FRAMES = 10
+_hold_count: int = 0
+_last_frame: np.ndarray | None = None
+_last_summary: str = "No one detected"
+
+
 def _predict_frame(
     img_pil: Image.Image | None,
     ctx: AppContext,
-) -> tuple[Image.Image | None, str]:
+) -> tuple[Any, Any]:
+    global _hold_count, _last_frame, _last_summary
+
     if img_pil is None:
-        return None, "No one detected"
+        return gr.update(), gr.update()
+
     img_np = np.array(img_pil.convert("RGB"))
     model = ctx.models.get(MODEL_YOLO)
     if model is None:
-        return img_pil, "Model not loaded"
+        return img_np, "Model not loaded"
+
     result = model.run(img_np, conf=0.1, iou=0.45)
-    out_pil = Image.fromarray(result.annotated_rgb)
-    counts  = result.payload.get("counts", {})
-    summary = ("Detected: " + ", ".join(counts.keys())) if counts else "No one detected"
-    return out_pil, summary
+    counts = result.payload.get("counts", {})
+
+    if counts:
+        summary = "Detected: " + ", ".join(counts.keys())
+        _last_frame = result.annotated_rgb
+        _last_summary = summary
+        _hold_count = 0
+        return result.annotated_rgb, summary
+
+    _hold_count += 1
+    if _hold_count <= _HOLD_FRAMES and _last_frame is not None:
+        return gr.update(), gr.update()
+
+    _hold_count = _HOLD_FRAMES + 1
+    _last_frame = result.annotated_rgb
+    _last_summary = "No one detected"
+    return result.annotated_rgb, "No one detected"
 
 
 # ── Gradio tab builder ────────────────────────────────────────────────────────
@@ -328,8 +363,7 @@ def build_display_tab(ctx: AppContext) -> dict:
                     show_label=False,
                 )
                 detection_img = gr.Image(
-                    type="pil",
-                    label=None,
+                    streaming=True,
                     show_label=False,
                     container=False,
                 )
@@ -347,7 +381,6 @@ def build_display_tab(ctx: AppContext) -> dict:
         weather_state = gr.State(None)
         events_state  = gr.State(list(SAMPLE_EVENTS))
         status_state  = gr.State(initial_status)
-        clock_timer   = gr.Timer(value=1.0,   active=True)
         weather_timer = gr.Timer(value=300.0, active=True)
 
     webcam.stream(
@@ -356,6 +389,7 @@ def build_display_tab(ctx: AppContext) -> dict:
         outputs=[detection_img, detected_name],
         time_limit=60,
         stream_every=0.1,
+        show_progress="hidden",
     )
 
     return {
@@ -364,20 +398,11 @@ def build_display_tab(ctx: AppContext) -> dict:
         "weather_state": weather_state,
         "events_state":  events_state,
         "status_state":  status_state,
-        "clock_timer":   clock_timer,
         "weather_timer": weather_timer,
     }
 
 
 def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
-    # 1-second clock tick — only the left panel needs re-rendering
-    comps["clock_timer"].tick(
-        fn=lambda ev: _render_left(ev),
-        inputs=[comps["events_state"]],
-        outputs=[comps["left_html"]],
-        show_progress="hidden",
-    )
-
     # 5-minute weather tick — only the right panel
     def _weather_tick(w, st):
         new_w  = fetch_weather()

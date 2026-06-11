@@ -1,4 +1,8 @@
-"""SmartMirror — Mirror tab (narrow side panels, plain black center)."""
+"""SmartMirror — Mirror tab.
+
+Layout: narrow left panel (clock only) | pure black empty center | narrow right panel (weather only).
+The center represents the physical two-way mirror surface — no camera feed here.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,6 @@ from ui.context import AppContext
 from ui.sm_display import (
     SAMPLE_EVENTS,
     _day_abbr,
-    _event_tag,
     _parse_weather,
     fetch_weather,
 )
@@ -19,7 +22,7 @@ from ui.smartmirror_theme import (
     C_MUTED,
 )
 
-_PANEL_W = 220  # px
+_PANEL_W = 240  # px
 
 
 def _render_left(events: list[dict]) -> str:
@@ -110,19 +113,23 @@ def render_display_simple(
     return _render_left(events), _render_right(weather_data)
 
 
-def build_display_simple_tab(ctx: AppContext) -> dict:
-    with gr.TabItem("Mirror", id="mirror"):
-        with gr.Row():
+def build_display_simple_tab(ctx: AppContext, initial_weather=None) -> dict:
+    with gr.TabItem("Mirror", id="mirror", render_children=False):
+        with gr.Row(equal_height=True):
             with gr.Column(min_width=_PANEL_W, scale=0):
                 left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
             with gr.Column(scale=3):
                 gr.HTML(
-                    '<div style="background:#000;height:100%;min-height:80vh;"></div>'
+                    '<div style="background:#000;height:100%;min-height:80vh;'
+                    'display:flex;align-items:center;justify-content:center;">'
+                    f'<div style="width:60%;height:2px;background:{C_BORDER};'
+                    f'opacity:0.3;"></div></div>',
+                    sanitize_html=False,
                 )
             with gr.Column(min_width=_PANEL_W, scale=0):
-                right_html = gr.HTML(_render_right(None))
+                right_html = gr.HTML(_render_right(initial_weather), sanitize_html=False)
 
-        weather_state = gr.State(None)
+        weather_state = gr.State(initial_weather)
         events_state  = gr.State(list(SAMPLE_EVENTS))
         weather_timer = gr.Timer(value=300.0, active=True)
 

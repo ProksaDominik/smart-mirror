@@ -1,6 +1,7 @@
 """SmartMirror — Display tab.
 
-Layout: left HTML panel (clock + schedule) | center webcam + YOLO detection | right HTML panel (weather + status)
+Layout: left panel (clock + schedule) | center (greeting + annotated camera) | right panel (weather + status)
+Camera uses browser-side streaming webcam with YOLO face recognition.
 """
 
 from __future__ import annotations
@@ -9,14 +10,16 @@ import json
 import threading
 import time
 import urllib.request
+from collections import Counter, deque
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+import cv2
 import gradio as gr
 import numpy as np
 import PIL.Image as Image
 
-from models.registry import MODEL_YOLO
 from ui.context import AppContext
 from ui.smartmirror_theme import (
     C_BORDER,
@@ -30,6 +33,30 @@ from ui.smartmirror_theme import (
     tag,
 )
 
+# Currently recognised person — set once per session, read by Operating tab.
+_current_user: str = ""
+
+# ── YOLO model (lazy-loaded once) ─────────────────────────────────────────────
+
+_yolo_model = None
+_yolo_lock = threading.Lock()
+_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "Laptop" / "best.pt"
+
+
+def _get_model():
+    global _yolo_model
+    if _yolo_model is not None:
+        return _yolo_model
+    with _yolo_lock:
+        if _yolo_model is None:
+            try:
+                from ultralytics import YOLO
+                _yolo_model = YOLO(str(_MODEL_PATH))
+            except Exception as e:
+                print(f"[YOLO] Could not load model from {_MODEL_PATH}: {e}")
+    return _yolo_model
+
+
 # ── Weather cache ─────────────────────────────────────────────────────────────
 
 _weather_cache: dict[str, Any] = {}
@@ -42,13 +69,13 @@ WEATHER_LOCATION = "Kortrijk"
 
 def _weather_icon(desc: str) -> str:
     d = desc.lower()
-    if "thunder" in d:   return "⛈️"
-    if "snow" in d or "blizzard" in d: return "🌨️"
+    if "thunder" in d:                              return "⛈️"
+    if "snow" in d or "blizzard" in d:              return "🌨️"
     if "rain" in d or "drizzle" in d or "shower" in d: return "🌧️"
-    if "fog" in d or "mist" in d or "haze" in d: return "🌫️"
-    if "partly" in d:    return "⛅"
-    if "cloud" in d or "overcast" in d: return "☁️"
-    if "sun" in d or "clear" in d: return "☀️"
+    if "fog" in d or "mist" in d or "haze" in d:   return "🌫️"
+    if "partly" in d:                               return "⛅"
+    if "cloud" in d or "overcast" in d:             return "☁️"
+    if "sun" in d or "clear" in d:                  return "☀️"
     return "🌡️"
 
 
@@ -98,15 +125,10 @@ def _parse_weather(data: dict | None) -> dict:
                 "icon": _weather_icon(day_desc),
             })
         return {
-            "temp_c": cc["temp_C"],
-            "feels_c": cc["FeelsLikeC"],
-            "humidity": cc["humidity"],
-            "wind_kmph": cc["windspeedKmph"],
-            "uv": cc.get("uvIndex", "--"),
-            "desc": desc,
-            "icon": _weather_icon(desc),
-            "city": city,
-            "country": country,
+            "temp_c": cc["temp_C"], "feels_c": cc["FeelsLikeC"],
+            "humidity": cc["humidity"], "wind_kmph": cc["windspeedKmph"],
+            "uv": cc.get("uvIndex", "--"), "desc": desc,
+            "icon": _weather_icon(desc), "city": city, "country": country,
             "forecast": forecast,
         }
     except (KeyError, IndexError, TypeError):
@@ -169,7 +191,8 @@ def _render_left(events: list[dict]) -> str:
     return f"""
 <div style="font-family:'Inter',sans-serif;background:#0A0A0F;
             height:100%;padding:32px 24px;color:#fff;">
-    <div id="sm-time" style="font-size:88px;font-weight:300;color:#fff;letter-spacing:-3px;line-height:1;">--:--</div>
+    <div id="sm-time" style="font-size:88px;font-weight:300;color:#fff;
+                             letter-spacing:-3px;line-height:1;">--:--</div>
     <div id="sm-date" style="font-size:16px;color:{C_MUTED};margin-top:10px;"></div>
     <div id="sm-ampm" style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
                 font-size:11px;padding:2px 10px;border-radius:4px;
@@ -255,9 +278,9 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
         <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;
                     color:{C_CYAN};margin-bottom:12px;">System Status</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            {_scrd(dot(C_GREEN if cam_ok  else C_RED),  "Camera",
+            {_scrd(dot(C_GREEN if cam_ok  else C_RED), "Camera",
                    "Online"   if cam_ok  else "Offline", C_GREEN if cam_ok  else C_RED)}
-            {_scrd(dot(C_GREEN if led_ok  else C_RED),  "LED",
+            {_scrd(dot(C_GREEN if led_ok  else C_RED), "LED",
                    led_str,                              C_GREEN if led_ok  else C_RED)}
             {_scrd(dot(C_GREEN if cloud_ok else C_MUTED), "Cloud Sync",
                    "In Sync"  if cloud_ok else "Offline", C_GREEN if cloud_ok else C_MUTED)}
@@ -268,134 +291,271 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 </div>"""
 
 
-# kept for dashboard on_load compat: returns (left_html, right_html)
-def render_display(
-    recognition: dict,
-    weather_data: dict | None,
-    events: list[dict],
-    status: dict,
-) -> tuple[str, str]:
-    return _render_left(events), _render_right(weather_data, status)
+# ── YOLO face recognition ─────────────────────────────────────────────────────
+
+# ── Recognition tuning ───────────────────────────────────────────────────────
+_DRAW_CONF      = 0.35   # min conf to draw a box at all
+_GREET_CONF     = 0.70   # min conf for a frame to count as any vote (known or unknown)
+_ID_CONF        = 0.60   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
+_MIN_FACE_FRAC  = 0.08   # face narrower than 8 % of frame → "come closer"
+_ZOOM_FACE_FRAC = 0.30   # face narrower than 30 % of frame → re-run on zoomed crop
+_VOTE_WINDOW    = 10     # how many recent frames we remember
+_VOTE_MIN       = 6      # same name must win this many votes to be greeted
+_NAME_HOLD_SEC  = 10.0   # keep the greeting up this long after confirmation
+
+_votes: deque = deque(maxlen=_VOTE_WINDOW)
+_confirmed_name: str | None = None
+_confirmed_at: float = 0.0
 
 
-# ── YOLO prediction ───────────────────────────────────────────────────────────
-
-# Hold last good annotated frame for up to N empty frames (~1 s at 10 fps)
-_HOLD_FRAMES = 10
-_hold_count: int = 0
-_last_frame: np.ndarray | None = None
-_last_summary: str = "No one detected"
+def _largest_box(result):
+    """Return (x1, y1, x2, y2, name, conf) of the widest box, or None."""
+    if result.boxes is None or len(result.boxes) == 0:
+        return None
+    best = max(result.boxes, key=lambda b: float(b.xyxy[0][2] - b.xyxy[0][0]))
+    x1, y1, x2, y2 = map(int, best.xyxy[0].tolist())
+    return x1, y1, x2, y2, result.names[int(best.cls)], float(best.conf)
 
 
 def _predict_frame(
-    img_pil: Image.Image | None,
-    ctx: AppContext,
-) -> tuple[Any, Any]:
-    global _hold_count, _last_frame, _last_summary
+    img: Image.Image | None,
+    iou_threshold: float = 0.45,
+) -> tuple[Image.Image | None, str]:
+    global _confirmed_name, _confirmed_at
 
-    if img_pil is None:
-        return gr.update(), gr.update()
+    if img is None:
+        return None, "No one detected"
 
-    img_np = np.array(img_pil.convert("RGB"))
-    model = ctx.models.get(MODEL_YOLO)
+    model = _get_model()
     if model is None:
-        return img_np, "Model not loaded"
+        return img, "Model not loaded"
 
-    result = model.run(img_np, conf=0.1, iou=0.45)
-    counts = result.payload.get("counts", {})
+    img_np  = np.array(img.convert("RGB"))
+    img_bgr = np.ascontiguousarray(img_np[..., ::-1])
+    H, W    = img_bgr.shape[:2]
 
-    if counts:
-        summary = "Detected: " + ", ".join(counts.keys())
-        _last_frame = result.annotated_rgb
-        _last_summary = summary
-        _hold_count = 0
-        return result.annotated_rgb, summary
+    result = model.predict(
+        source=img_bgr, conf=_DRAW_CONF, iou=iou_threshold,
+        imgsz=640, verbose=False,
+    )[0]
+    box = _largest_box(result)
 
-    _hold_count += 1
-    if _hold_count <= _HOLD_FRAMES and _last_frame is not None:
-        return gr.update(), gr.update()
+    name: str | None = None
+    conf = 0.0
+    too_far = False
 
-    _hold_count = _HOLD_FRAMES + 1
-    _last_frame = result.annotated_rgb
-    _last_summary = "No one detected"
-    return result.annotated_rgb, "No one detected"
+    if box:
+        x1, y1, x2, y2, name, conf = box
+        face_w = x2 - x1
+
+        if face_w < _MIN_FACE_FRAC * W:
+            too_far, name = True, None
+        elif face_w < _ZOOM_FACE_FRAC * W:
+            # Face is smallish: crop a square around it and re-run so the
+            # model classifies a close-up face instead of a tiny blur.
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            side   = int(max(face_w, y2 - y1) * 2.2)
+            cx1, cy1 = max(0, cx - side // 2), max(0, cy - side // 2)
+            cx2, cy2 = min(W, cx1 + side), min(H, cy1 + side)
+            crop = np.ascontiguousarray(img_bgr[cy1:cy2, cx1:cx2])
+            zres = model.predict(
+                source=crop, conf=_DRAW_CONF, iou=iou_threshold,
+                imgsz=640, verbose=False,
+            )[0]
+            zbox = _largest_box(zres)
+            if zbox:
+                name, conf = zbox[4], zbox[5]
+
+    # Vote: above _ID_CONF → specific name; face detected but below → "__unknown__".
+    if name and conf >= _ID_CONF:
+        vote = name
+    elif box is not None and not too_far:
+        vote = "__unknown__"   # Face seen but not confident enough to name
+    else:
+        vote = None
+    _votes.append(vote)
+    tally = Counter(v for v in _votes if v)
+    if tally:
+        winner, n = tally.most_common(1)[0]
+        if n >= _VOTE_MIN:
+            _confirmed_name, _confirmed_at = winner, time.monotonic()
+
+    # Annotate the frame.
+    annotated = img_bgr.copy()
+    if box:
+        x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
+        label = f"{name} {conf:.2f}" if name else "..."
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 245, 255), 2)
+        cv2.putText(
+            annotated, label, (x1, max(0, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 245, 255), 2,
+        )
+
+    if _confirmed_name and time.monotonic() - _confirmed_at < _NAME_HOLD_SEC:
+        if _confirmed_name == "__unknown__":
+            summary = "Unregistered face recognized"
+        else:
+            summary = f"{_time_period()}, {_confirmed_name}"
+    elif too_far:
+        summary = "Come closer to the camera"
+    elif box:
+        summary = "Scanning..."
+    else:
+        summary = "No one detected"
+
+    return Image.fromarray(annotated[..., ::-1]), summary
+
+
+def _time_period() -> str:
+    hour = datetime.now().hour
+    if 5 <= hour < 12:
+        return "Good Morning"
+    if 12 <= hour < 18:
+        return "Good Afternoon"
+    return "Good Evening"
+
+
+def _greeting_html(summary: str) -> str:
+    """Idle / scanning state (no recognition yet)."""
+    return (
+        f'<div style="background:{C_CARD};border:1px solid {C_BORDER};border-radius:12px;'
+        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'<div style="font-size:13px;color:{C_MUTED};letter-spacing:.08em;">{summary}</div>'
+        f'</div>'
+    )
+
+
+def _recognised_html(name: str) -> str:
+    """Permanent greeting shown once a known face is confirmed."""
+    period = _time_period()
+    return (
+        f'<div style="background:#0A1F1F;border:2px solid {C_CYAN};border-radius:12px;'
+        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'<div style="font-size:10px;color:{C_CYAN};letter-spacing:.12em;'
+        f'text-transform:uppercase;margin-bottom:6px;">Recognised</div>'
+        f'<div style="font-size:22px;font-weight:600;color:#fff;">{period}, {name}</div>'
+        f'<div style="height:3px;background:linear-gradient(90deg,{C_CYAN},{C_GREEN});'
+        f'border-radius:2px;margin-top:10px;"></div>'
+        f'</div>'
+    )
+
+
+def _unregistered_html() -> str:
+    """Card shown when a face is detected but not in the registered dataset."""
+    return (
+        f'<div style="background:#1F0A0A;border:2px solid {C_RED};border-radius:12px;'
+        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'<div style="font-size:10px;color:{C_RED};letter-spacing:.12em;'
+        f'text-transform:uppercase;margin-bottom:6px;">Unknown</div>'
+        f'<div style="font-size:18px;font-weight:600;color:#fff;">Unregistered face recognized</div>'
+        f'<div style="height:3px;background:linear-gradient(90deg,{C_RED},#FF8C33);'
+        f'border-radius:2px;margin-top:10px;"></div>'
+        f'</div>'
+    )
 
 
 # ── Gradio tab builder ────────────────────────────────────────────────────────
 
-def build_display_tab(ctx: AppContext) -> dict:
+def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
     initial_status = {
-        "camera": False, "led": "Green",
-        "cloud": False, "weather_api": False, "wifi": True,
+        "camera": True, "led": "Green",
+        "cloud": False, "weather_api": initial_weather is not None,
     }
 
-    with gr.TabItem("Display", id="display"):
+    with gr.TabItem("Display", id="display", render_children=False):
         with gr.Row():
 
             # LEFT: clock + schedule
             with gr.Column(scale=1):
                 left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
 
-            # CENTER: Pi camera feed + YOLO detection (server-side, no browser webcam)
+            # CENTER: live webcam + automatic face recognition
             with gr.Column(scale=2):
-                detection_img = gr.Image(
+                greeting_html = gr.HTML(
+                    _greeting_html("Looking for a face…"),
+                    sanitize_html=False,
+                )
+                webcam = gr.Image(
+                    sources=["webcam"],
+                    streaming=True,
+                    type="pil",
+                    label="Camera",
                     show_label=False,
                     container=False,
                 )
-                detected_name = gr.Textbox(
-                    value="No one detected",
-                    label=None,
-                    show_label=False,
-                    interactive=False,
-                )
-                camera_timer = gr.Timer(value=1.0, active=True)
 
             # RIGHT: weather + system status
             with gr.Column(scale=1):
-                right_html = gr.HTML(_render_right(None, initial_status))
+                right_html = gr.HTML(
+                    _render_right(initial_weather, initial_status),
+                    sanitize_html=False,
+                )
 
-        weather_state = gr.State(None)
-        events_state  = gr.State(list(SAMPLE_EVENTS))
-        status_state  = gr.State(initial_status)
-        weather_timer = gr.Timer(value=300.0, active=True)
+        weather_state      = gr.State(initial_weather)
+        events_state       = gr.State(list(SAMPLE_EVENTS))
+        status_state       = gr.State(initial_status)
+        current_user_state = gr.State("")   # Set when a face is confirmed
+        weather_timer      = gr.Timer(value=300.0, active=True)
 
     return {
-        "left_html":     left_html,
-        "right_html":    right_html,
-        "detection_img": detection_img,
-        "detected_name": detected_name,
-        "camera_timer":  camera_timer,
-        "weather_state": weather_state,
-        "events_state":  events_state,
-        "status_state":  status_state,
-        "weather_timer": weather_timer,
+        "left_html":          left_html,
+        "right_html":         right_html,
+        "greeting_html":      greeting_html,
+        "webcam":             webcam,
+        "weather_state":      weather_state,
+        "events_state":       events_state,
+        "status_state":       status_state,
+        "current_user_state": current_user_state,
+        "weather_timer":      weather_timer,
     }
 
 
 def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
-    # 1-second camera tick — read Pi camera and run YOLO
-    def _camera_tick():
-        from inputs.registry import INPUT_RPI_CAMERA
-        provider = ctx.providers.get(INPUT_RPI_CAMERA)
-        if provider is None:
-            return gr.update(), gr.update()
-        result = provider.sync_preview("640x480", 6.0, None, None, None)
-        frame = result.frame_rgb
-        if frame is None:
-            return gr.update(), gr.update()
-        img_pil = Image.fromarray(frame)
-        return _predict_frame(img_pil, ctx)
+    # Reset module-level voting state so each app start is a fresh scan.
+    global _votes, _confirmed_name, _confirmed_at
+    _votes.clear()
+    _confirmed_name = None
+    _confirmed_at = 0.0
 
-    comps["camera_timer"].tick(
-        fn=_camera_tick,
-        inputs=None,
-        outputs=[comps["detection_img"], comps["detected_name"]],
+    # done=True the moment a face (known or unknown) is confirmed.
+    # All subsequent stream ticks become instant no-ops — YOLO never runs again.
+    _state = {"done": False}
+
+    _PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
+
+    _NOOP = (gr.update(), gr.update())   # No-op for both outputs
+
+    def _process_frame(img):
+        global _current_user
+        if _state["done"]:
+            return _NOOP
+
+        if img is None:
+            return _NOOP
+
+        _, summary = _predict_frame(img)
+
+        if summary == "Unregistered face recognized":
+            _state["done"] = True
+            return _unregistered_html(), "__unknown__"
+
+        for prefix in _PERIODS:
+            if summary.startswith(prefix):
+                name = summary[len(prefix):]
+                _current_user = name
+                _state["done"] = True
+                return _recognised_html(name), name
+
+        return _NOOP   # Still scanning — touch nothing
+
+    comps["webcam"].stream(
+        fn=_process_frame,
+        inputs=[comps["webcam"]],
+        outputs=[comps["greeting_html"], comps["current_user_state"]],
+        stream_every=1.0,
         show_progress="hidden",
-        concurrency_id="webcam",
-        concurrency_limit=1,
     )
 
-    # 5-minute weather tick — only the right panel
     def _weather_tick(w, st):
         new_w  = fetch_weather()
         new_st = {**st, "weather_api": new_w is not None}

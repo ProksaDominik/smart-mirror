@@ -1,8 +1,8 @@
 """SmartMirror Gradio dashboard — assembles all four pages.
 
 Tabs:
-  Display        — clock/schedule | webcam + YOLO detection | weather/status
-  Mirror         — narrow side panels + plain black center
+  Display        — clock/schedule | streaming webcam + YOLO face recognition | weather/status
+  Mirror         — narrow side panels + plain black center (physical mirror area)
   Getting Started— onboarding wizard with step-status cards
   Operating      — to-do list · calendar sync · mirror settings
 """
@@ -15,9 +15,7 @@ from hardware.setup import start_gpio
 from ui.context import AppContext
 from ui.sm_about import build_about_tab, wire_about_callbacks
 from ui.sm_display import (
-    SAMPLE_EVENTS,
     _render_left,
-    _render_right,
     build_display_tab,
     fetch_weather,
     wire_display_callbacks,
@@ -47,6 +45,38 @@ _SM_THEME = gr.themes.Base(
     block_label_text_color="#8B8BA8",
 )
 
+_WEBCAM_JS = """
+() => {
+    function smHandleWebcamButtons() {
+        var vid = document.querySelector('video');
+        if (!vid) return;
+        // Walk up from the <video> until we find a container that has buttons
+        var el = vid.parentElement;
+        for (var depth = 0; el && el.tagName !== 'BODY' && depth < 8; depth++) {
+            var btns = el.querySelectorAll('button');
+            if (btns.length) {
+                btns.forEach(function(btn) {
+                    // Click the first non-hidden button to start the stream
+                    if (btn.offsetParent !== null) btn.click();
+                    // Then hide it so it never shows
+                    btn.style.setProperty('display', 'none', 'important');
+                    btn.style.setProperty('visibility', 'hidden', 'important');
+                    btn.style.setProperty('pointer-events', 'none', 'important');
+                });
+                return;
+            }
+            el = el.parentElement;
+        }
+    }
+    // Run immediately and on retries in case the component mounts late
+    setTimeout(smHandleWebcamButtons, 200);
+    setTimeout(smHandleWebcamButtons, 700);
+    setTimeout(smHandleWebcamButtons, 1500);
+    // MutationObserver catches any button that appears after initial load
+    new MutationObserver(smHandleWebcamButtons)
+        .observe(document.body, {childList: true, subtree: true});
+}
+"""
 
 _CLOCK_JS = """
 () => {
@@ -75,75 +105,114 @@ _CLOCK_JS = """
         window._smClock=setInterval(tick,1000);
     }
     smStartClocks();
-    // Re-run after Gradio finishes rendering components
     setTimeout(smStartClocks, 1000);
     setTimeout(smStartClocks, 3000);
 }
 """
 
 
+_KIOSK_JS = """
+() => {
+    if (!new URLSearchParams(window.location.search).has('kiosk')) return;
+    function smKioskInit() {
+        // Find and click the Mirror tab
+        var btns = document.querySelectorAll('.tab-nav button');
+        for (var i = 0; i < btns.length; i++) {
+            if (btns[i].textContent.trim() === 'Mirror') {
+                btns[i].click();
+                break;
+            }
+        }
+        // Hide the tab nav bar so only the mirror content is visible
+        var nav = document.querySelector('.tab-nav');
+        if (nav) nav.style.setProperty('display', 'none', 'important');
+        // Remove scrollbars
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.overflow = 'hidden';
+    }
+    smKioskInit();
+    setTimeout(smKioskInit, 500);
+    setTimeout(smKioskInit, 1500);
+}
+"""
+
+
 def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
+    initial_weather = fetch_weather()
+
     with gr.Blocks(title="SmartMirror") as demo:
 
         with gr.Tabs():
-            # ── Tab 1: Display ────────────────────────────────────────────────
-            display_comps = build_display_tab(ctx)
-
-            # ── Tab 2: Mirror ─────────────────────────────────────────────────
-            mirror_comps = build_display_simple_tab(ctx)
-
-            # ── Tab 3: Getting Started ────────────────────────────────────────
-            about_comps = build_about_tab(ctx)
-
-            # ── Tab 4: Operating ─────────────────────────────────────────────
+            display_comps   = build_display_tab(ctx, initial_weather=initial_weather)
+            mirror_comps    = build_display_simple_tab(ctx, initial_weather=initial_weather)
+            about_comps     = build_about_tab(ctx)
             operating_comps = build_operating_tab(ctx)
 
-        # ── Wire callbacks ────────────────────────────────────────────────────
         wire_display_callbacks(display_comps, ctx)
         wire_display_simple_callbacks(mirror_comps, ctx)
         wire_about_callbacks(about_comps, ctx)
         wire_operating_callbacks(operating_comps, ctx)
 
-        # ── Seed initial weather on load ──────────────────────────────────────
         def _on_load():
             from ui.sm_about import (
                 _calendar_token_exists,
-                _face_dataset_count,
+                _model_exists,
                 render_about,
             )
-            weather = fetch_weather()
-            status = {
-                "camera": False, "led": "Green",
-                "cloud": False, "weather_api": weather is not None, "wifi": True,
-            }
-            display_right = _render_right(weather, status)
-            mirror_left, mirror_right = render_display_simple(
-                weather_data=weather, events=SAMPLE_EVENTS
+            return render_about(
+                cam_ok=True,
+                model_ok=_model_exists(),
+                calendar_ok=_calendar_token_exists(ctx.base_dir),
             )
-            photos     = _face_dataset_count(ctx.base_dir)
-            cal_ok     = _calendar_token_exists(ctx.base_dir)
-            about_html = render_about(False, photos, cal_ok)
-            return display_right, weather, status, mirror_left, mirror_right, weather, about_html
 
         demo.load(
             fn=_on_load,
             inputs=None,
+            outputs=[about_comps["about_html"]],
+            show_progress="hidden",
+        )
+
+        demo.load(fn=None, js=_CLOCK_JS)
+        demo.load(fn=None, js=_WEBCAM_JS)
+        demo.load(fn=None, js=_KIOSK_JS)
+
+        # When a face is confirmed → sync that person's calendar into all panels
+        def _on_user_confirmed(name, tasks, mode):
+            if not name or name == "__unknown__":
+                return gr.update(), gr.update(), gr.update(), gr.update()
+            from ui.sm_operating import (
+                try_google_calendar_sync,
+                events_to_cal_tasks,
+                render_task_list,
+            )
+            import db
+            events, _ = try_google_calendar_sync(ctx.base_dir, name)
+            cal_tasks = events_to_cal_tasks(events)
+            try:
+                db.replace_calendar_tasks(cal_tasks)
+            except Exception as exc:
+                print(f"[DB] face-sync failed: {exc}")
+            user_tasks = [t for t in tasks if t.get("source") != "calendar"]
+            new_tasks  = user_tasks + cal_tasks
+            return events, _render_left(events), new_tasks, render_task_list(new_tasks, mode)
+
+        display_comps["current_user_state"].change(
+            fn=_on_user_confirmed,
+            inputs=[
+                display_comps["current_user_state"],
+                operating_comps["tasks_state"],
+                operating_comps["filter_state"],
+            ],
             outputs=[
-                display_comps["right_html"],
-                display_comps["weather_state"],
-                display_comps["status_state"],
-                mirror_comps["left_html"],
-                mirror_comps["right_html"],
-                mirror_comps["weather_state"],
-                about_comps["about_html"],
+                display_comps["events_state"],
+                display_comps["left_html"],
+                operating_comps["tasks_state"],
+                operating_comps["task_list_html"],
             ],
             show_progress="hidden",
         )
 
-        # ── Start clock via JS on page load ───────────────────────────────────
-        demo.load(fn=None, js=_CLOCK_JS)
-
-        # ── Wire Operating calendar sync into Display + Mirror ────────────────
+        # Propagate calendar events into Display and Mirror panels
         operating_comps["events_state"].change(
             fn=lambda ev: _render_left(ev),
             inputs=[operating_comps["events_state"]],
@@ -157,27 +226,29 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             show_progress="hidden",
         )
 
-    # ── Start GPIO ────────────────────────────────────────────────────────────
-    from ui.inference_handlers import InferenceHandlers
-    from ui.history import HistoryStore
+    # GPIO: short press does nothing extra; hold shuts down
+    def _noop():
+        pass
 
-    history    = HistoryStore()
-    _inference = InferenceHandlers(ctx, history)
+    def _shutdown():
+        import sys
+        print("[SmartMirror] Shutdown button held — exiting.")
+        sys.exit(0)
 
     try:
         ctx.gpio = start_gpio(
             ctx.cfg,
-            on_short_press=_inference.on_gpio_short_press,
-            on_hold_press=_inference.shutdown_now,
+            on_short_press=_noop,
+            on_hold_press=_shutdown,
         )
     except Exception as exc:
-        print(f"[GPIO] Could not initialize button (pin {ctx.cfg.shutdown_button_pin}): {exc} — running without hardware button")
+        print(f"[GPIO] Could not initialise button: {exc} — running without hardware button")
 
     return demo
 
 
 def launch_smartmirror_dashboard(ctx: AppContext, demo: gr.Blocks) -> None:
-    demo.queue(default_concurrency_limit=4).launch(
+    demo.launch(
         server_name=ctx.cfg.gradio_host,
         server_port=ctx.cfg.gradio_port,
         show_error=True,

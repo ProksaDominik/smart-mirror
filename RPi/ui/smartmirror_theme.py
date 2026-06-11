@@ -110,6 +110,20 @@ textarea:focus {
 /* ── Gradio HTML wrapper reset ───────────────────────────────────────────── */
 .html-container { padding: 0 !important; }
 
+/* ── Kill Gradio streaming animations (prevent greeting from flashing) ───── */
+/* Gradio adds .generating / .pending during every stream tick, which applies
+   a pulsing border and opacity animation. Suppress all of it globally so
+   gr.HTML components never visually react to background stream activity. */
+.generating,
+.generating *,
+.pending,
+.pending * {
+    animation: none !important;
+    transition: none !important;
+    border-color: transparent !important;
+}
+.block.generating { border: none !important; box-shadow: none !important; }
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #0A0A0F; }

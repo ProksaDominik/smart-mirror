@@ -1,8 +1,7 @@
 """SmartMirror — Operating tab.
 
-Left panel : to-do list (All / Today / This Week / Completed) + today's events.
-Right panel: Google Calendar sync card + mirror settings (brightness, refresh,
-             wake-on-face-detect, voice greeting).
+Left panel : schedule & tasks (Today / Upcoming / Completed) with checkboxes.
+Right panel: Google Calendar sync card + link calendar.
 """
 
 from __future__ import annotations
@@ -11,7 +10,6 @@ import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import gradio as gr
 
@@ -32,6 +30,7 @@ from ui.smartmirror_theme import (
     dot,
     tag,
 )
+
 
 # ── Task persistence ──────────────────────────────────────────────────────────
 
@@ -67,43 +66,70 @@ def _this_week_end() -> str:
     return (date.today() + timedelta(days=7 - date.today().weekday())).isoformat()
 
 
-# ── Events / Calendar helpers ─────────────────────────────────────────────────
+# ── Calendar helpers ──────────────────────────────────────────────────────────
+
+_KNOWN_PEOPLE = ["Dominik", "JP", "Joao", "Liviu", "Lloyd", "Michal", "Radu"]
 
 _last_sync_time: str = "never"
 _sync_event_count: int = 0
 
+_GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
-def try_google_calendar_sync(base_dir: Path) -> tuple[list[dict], str]:
-    """Try to sync Google Calendar. Returns (events, status_message)."""
-    token_path = base_dir / "token.json"
-    creds_path = base_dir / "credentials.json"
-    if not creds_path.exists():
-        alt = base_dir / "data" / "credentials.json"
-        if alt.exists():
-            creds_path = alt
-        else:
-            return SAMPLE_EVENTS, "credentials.json not found — using sample events."
+
+def _token_path(base_dir: Path, name: str | None) -> Path:
+    if name:
+        token_dir = base_dir / "data" / "tokens"
+        token_dir.mkdir(parents=True, exist_ok=True)
+        return token_dir / f"{name}.json"
+    return base_dir / "token.json"
+
+
+def _creds_path(base_dir: Path) -> Path | None:
+    for p in [base_dir / "credentials.json", base_dir / "data" / "credentials.json"]:
+        if p.exists():
+            return p
+    return None
+
+
+def link_google_calendar(base_dir: Path, name: str) -> str:
+    """Run the OAuth flow for one person and save their token."""
+    cp = _creds_path(base_dir)
+    if cp is None:
+        return "credentials.json not found. Download it from Google Cloud Console and place it in the RPi/ folder."
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        flow = InstalledAppFlow.from_client_secrets_file(str(cp), _GCAL_SCOPES)
+        creds = flow.run_local_server(port=0)
+        _token_path(base_dir, name).write_text(creds.to_json())
+        return f"Google Calendar linked for {name}."
+    except Exception as exc:
+        return f"Failed: {exc}"
+
+
+def try_google_calendar_sync(base_dir: Path, name: str | None = None) -> tuple[list[dict], str]:
+    cp = _creds_path(base_dir)
+    if cp is None:
+        return SAMPLE_EVENTS, "credentials.json not found — using sample events."
+    tp = _token_path(base_dir, name)
     try:
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build as gapi_build
 
-        SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
         creds = None
-        if token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        if tp.exists():
+            creds = Credentials.from_authorized_user_file(str(tp), _GCAL_SCOPES)
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                tp.write_text(creds.to_json())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-                creds = flow.run_local_server(port=0)
-            token_path.write_text(creds.to_json())
+                who = name or "this account"
+                return SAMPLE_EVENTS, f"No calendar linked for {who}. Use 'Link Calendar' below."
 
         service = gapi_build("calendar", "v3", credentials=creds)
         today_start = datetime.combine(date.today(), datetime.min.time()).isoformat() + "Z"
-        today_end = datetime.combine(date.today(), datetime.max.time()).isoformat() + "Z"
+        today_end   = datetime.combine(date.today(), datetime.max.time()).isoformat() + "Z"
         items = (
             service.events()
             .list(
@@ -119,63 +145,194 @@ def try_google_calendar_sync(base_dir: Path) -> tuple[list[dict], str]:
         events = []
         for item in items:
             start = item["start"].get("dateTime", item["start"].get("date", ""))
-            t = datetime.fromisoformat(start.replace("Z", "+00:00")).strftime("%H:%M") if "T" in start else start
-            events.append({"time": t, "title": item.get("summary", "(no title)"), "active": False})
+            t = (
+                datetime.fromisoformat(start.replace("Z", "+00:00")).strftime("%H:%M")
+                if "T" in start else start
+            )
+            events.append({"time": t, "title": item.get("summary", "(no title)"), "active": False, "gcal_id": item["id"]})
         global _last_sync_time, _sync_event_count
-        _last_sync_time = datetime.now().strftime("%H:%M:%S")
+        _last_sync_time   = datetime.now().strftime("%H:%M:%S")
         _sync_event_count = len(events)
-        return events, f"Synced {len(events)} events."
+        who = name or "calendar"
+        return events, f"Synced {len(events)} events for {who}."
     except ImportError:
-        return SAMPLE_EVENTS, "google-api-python-client not installed — using sample events."
+        return SAMPLE_EVENTS, "google-api-python-client not installed."
     except Exception as exc:
         return SAMPLE_EVENTS, f"Sync failed: {exc}"
 
 
+def delete_google_calendar_event(base_dir: Path, name: str | None, event_id: str) -> None:
+    if not event_id:
+        return
+    tp = _token_path(base_dir, name)
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build as gapi_build
+
+        creds = None
+        if tp.exists():
+            creds = Credentials.from_authorized_user_file(str(tp), _GCAL_SCOPES)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                tp.write_text(creds.to_json())
+            else:
+                return
+        service = gapi_build("calendar", "v3", credentials=creds)
+        service.events().delete(calendarId="primary", eventId=event_id).execute()
+    except Exception as exc:
+        print(f"[GCal] Could not delete event {event_id}: {exc}")
+
+
 # ── HTML render helpers ───────────────────────────────────────────────────────
 
-def _render_task_row(task: dict) -> str:
-    text = task["text"]
-    done = task["completed"]
-    tid = task["id"]
-    strike = f"text-decoration:line-through;color:{C_MUTED};" if done else ""
-    check_color = C_GREEN if done else C_BORDER
-    check_icon = "✓" if done else ""
-    return f"""
-<div style="display:flex;align-items:center;gap:12px;padding:12px 0;
-            border-bottom:1px solid {C_BORDER};" id="task-{tid}">
-    <div style="width:18px;height:18px;border-radius:4px;border:2px solid {check_color};
-                display:flex;align-items:center;justify-content:center;
-                font-size:11px;color:{C_GREEN};flex-shrink:0;">{check_icon}</div>
-    <span style="font-size:14px;color:{C_WHITE};{strike}flex:1;">{text}</span>
-    <span style="font-size:11px;color:{C_MUTED};">{task.get('due','')}</span>
-</div>"""
+_DAY_NAMES   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _fmt_due(due_iso: str) -> str:
+    try:
+        d = date.fromisoformat(due_iso)
+        return f"{_DAY_NAMES[d.weekday()]}, {d.day} {_MONTH_NAMES[d.month - 1]}"
+    except Exception:
+        return due_iso
+
+
+def _render_task_row(task: dict, is_today: bool = True) -> str:
+    done   = task["completed"]
+    tid    = task["id"]
+    source = task.get("source", "user")
+    text   = task["text"]
+
+    # Calendar events stored as "HH:MM – Class Name" — split for better display
+    if source == "calendar" and " – " in text:
+        time_part, class_name = text.split(" – ", 1)
+    else:
+        time_part  = None
+        class_name = None
+
+    strike       = f"text-decoration:line-through;color:{C_MUTED};" if done else ""
+    check_bg     = C_GREEN if done else "transparent"
+    check_border = C_GREEN if done else (C_CYAN if is_today else C_BORDER)
+    check_icon   = "&#10003;" if done else ""
+
+    row_style = (
+        f"border-left:3px solid {C_CYAN};background:rgba(0,245,255,0.05);"
+        if is_today and not done else ""
+    )
+
+    toggle_js = (
+        f"(function(t){{var el=document.querySelector('#sm-task-action textarea');"
+        f"if(!el)el=document.querySelector('#sm-task-action input');"
+        f"if(!el)return;"
+        f"var p=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;"
+        f"Object.getOwnPropertyDescriptor(p,'value').set.call(el,t);"
+        f"el.dispatchEvent(new Event('input',{{bubbles:true}}));"
+        f"el.dispatchEvent(new Event('change',{{bubbles:true}}));"
+        f"}})(\'{tid}\')"
+    )
+
+    # Date label shown above non-today tasks
+    date_label = ""
+    if not is_today:
+        due = task.get("due", "")
+        if due:
+            date_label = (
+                f'<div style="font-size:13px;font-weight:700;color:{C_PURPLE};'
+                f'margin-bottom:6px;letter-spacing:.02em;">'
+                f'📅 {_fmt_due(due)}</div>'
+            )
+
+    if class_name:
+        # Calendar event: class name big, time as small badge
+        text_html = (
+            f'<div style="flex:1;">'
+            f'{date_label}'
+            f'<div style="font-size:15px;font-weight:600;color:{C_WHITE};{strike}">{class_name}</div>'
+            f'<div style="font-size:11px;color:{C_CYAN if is_today else C_MUTED};margin-top:3px;">'
+            f'⏰ {time_part}</div>'
+            f'</div>'
+        )
+    else:
+        text_html = (
+            f'<div style="flex:1;">'
+            f'{date_label}'
+            f'<div style="font-size:14px;color:{C_WHITE};{strike}">{text}</div>'
+            f'</div>'
+        )
+
+    return (
+        f'<div style="display:flex;align-items:flex-start;gap:12px;padding:12px;'
+        f'border-radius:8px;margin-bottom:4px;{row_style}" id="task-{tid}">'
+        f'<div onclick="{toggle_js}" '
+        f'style="width:20px;height:20px;border-radius:4px;border:2px solid {check_border};'
+        f'background:{check_bg};display:flex;align-items:center;justify-content:center;'
+        f'font-size:12px;color:#000;flex-shrink:0;cursor:pointer;user-select:none;margin-top:2px;">'
+        f'{check_icon}</div>'
+        f'{text_html}'
+        f'</div>'
+    )
+
+
+def _render_filter_tabs(active: str) -> str:
+    tabs = [("Tasks", "Today", 0), ("Completed", "Completed", 1)]
+    items = ""
+    for label, value, idx in tabs:
+        is_active = value == active
+        bg     = C_CYAN if is_active else "transparent"
+        color  = "#000" if is_active else C_MUTED
+        border = f"border:1px solid {C_CYAN};" if is_active else f"border:1px solid {C_BORDER};"
+        js     = f"(function(){{var r=document.querySelectorAll('#sm-filter-radio input[type=radio]');if(r[{idx}])r[{idx}].click();}})()"
+        items += (
+            f'<div onclick="{js}" style="padding:8px 20px;border-radius:8px;{border}'
+            f'background:{bg};color:{color};font-size:13px;font-weight:600;'
+            f'cursor:pointer;user-select:none;font-family:Inter,sans-serif;">{label}</div>'
+        )
+    return f'<div style="display:flex;gap:8px;margin-bottom:16px;">{items}</div>'
 
 
 def render_task_list(tasks: list[dict], filter_mode: str) -> str:
     today = _today_iso()
-    week_end = _this_week_end()
-
-    if filter_mode == "Today":
-        shown = [t for t in tasks if t.get("due", "") == today and not t["completed"]]
-    elif filter_mode == "This Week":
-        shown = [t for t in tasks if today <= t.get("due", today) <= week_end and not t["completed"]]
-    elif filter_mode == "Completed":
-        shown = [t for t in tasks if t["completed"]]
+    if filter_mode == "Completed":
+        rows = "".join(_render_task_row(t, t.get("due", "") == today) for t in tasks if t["completed"])
+        empty_msg = "No completed tasks yet."
     else:
-        shown = [t for t in tasks if not t["completed"]]
+        today_tasks = [t for t in tasks if t.get("due", "") == today and not t["completed"]]
+        other_tasks = sorted(
+            [t for t in tasks if t.get("due", "") != today and not t["completed"]],
+            key=lambda t: t.get("due", ""),
+        )
+        today_section = ""
+        if today_tasks:
+            today_header = (
+                f'<div style="font-size:11px;font-weight:700;letter-spacing:.1em;'
+                f'text-transform:uppercase;color:{C_CYAN};padding:8px 0 6px;'
+                f'border-bottom:1px solid {C_CYAN};margin-bottom:8px;">Today</div>'
+            )
+            today_section = today_header + "".join(_render_task_row(t, True) for t in today_tasks)
+        other_section = ""
+        if other_tasks:
+            other_header = (
+                f'<div style="font-size:11px;font-weight:700;letter-spacing:.1em;'
+                f'text-transform:uppercase;color:{C_MUTED};padding:16px 0 6px;'
+                f'border-bottom:1px solid {C_BORDER};margin-bottom:8px;">Upcoming</div>'
+            )
+            other_section = other_header + "".join(_render_task_row(t, False) for t in other_tasks)
+        rows = today_section + other_section
+        empty_msg = "No tasks scheduled."
 
-    rows = "".join(_render_task_row(t) for t in shown)
     empty = (
-        f'<div style="color:{C_MUTED};font-size:14px;padding:16px 0;">No tasks here.</div>'
-        if not rows
-        else ""
+        f'<div style="color:{C_MUTED};font-size:14px;padding:16px 0;">{empty_msg}</div>'
+        if not rows else ""
     )
     return f'<div style="font-family:Inter,sans-serif;">{rows}{empty}</div>'
 
 
 def _render_event_row(ev: dict, is_active: bool = False) -> str:
-    border = f"border-left:3px solid {C_CYAN};" if is_active else ""
-    bg = "background:rgba(0,245,255,0.05);" if is_active else f"background:{C_CARD};"
+    border    = f"border-left:3px solid {C_CYAN};" if is_active else ""
+    bg        = "background:rgba(0,245,255,0.05);" if is_active else f"background:{C_CARD};"
     dot_color = C_CYAN if is_active else C_PURPLE
     return f"""
 <div style="{bg}{border}border-radius:10px;padding:12px 16px;margin-bottom:8px;">
@@ -195,10 +352,29 @@ def render_events_panel(events: list[dict]) -> str:
     return rows or f'<div style="color:{C_MUTED};font-size:14px;">No events today.</div>'
 
 
+def events_to_cal_tasks(events: list[dict]) -> list[dict]:
+    """Convert Google Calendar event dicts to task dicts."""
+    now_str = datetime.now().strftime("%H:%M:%S")
+    today   = _today_iso()
+    tasks   = []
+    for ev in events:
+        uid = str(uuid.uuid5(uuid.NAMESPACE_DNS, ev.get("time", "") + ev.get("title", "")))[:8]
+        tasks.append({
+            "id":            f"gcal-{uid}",
+            "text":          f"{ev.get('time', '')} – {ev.get('title', '')}".strip(" –"),
+            "due":           today,
+            "completed":     False,
+            "source":        "calendar",
+            "gcal_event_id": ev.get("gcal_id", ""),
+            "created_at":    now_str,
+        })
+    return tasks
+
+
 def _cal_card(last_sync: str, event_count: int, cal_ok: bool) -> str:
-    status_dot = dot(C_GREEN) if cal_ok else dot(C_MUTED)
+    status_dot  = dot(C_GREEN) if cal_ok else dot(C_MUTED)
     status_text = "Connected" if cal_ok else "Not connected"
-    last = last_sync if last_sync != "never" else "—"
+    last        = last_sync if last_sync != "never" else "—"
     return f"""
 <div style="background:{C_CARD};border:1px solid {C_CYAN};border-radius:12px;
             padding:20px;margin-bottom:24px;">
@@ -207,8 +383,7 @@ def _cal_card(last_sync: str, event_count: int, cal_ok: bool) -> str:
                     display:flex;align-items:center;justify-content:center;
                     font-size:20px;flex-shrink:0;">📅</div>
         <div style="flex:1;">
-            <div style="font-size:16px;font-weight:600;color:{C_WHITE};">
-                Google Calendar</div>
+            <div style="font-size:16px;font-weight:600;color:{C_WHITE};">Google Calendar</div>
             <div style="font-size:12px;color:{C_MUTED};margin-top:2px;">
                 Last synced: {last} &nbsp;·&nbsp; {event_count} events today</div>
         </div>
@@ -222,48 +397,62 @@ def _cal_card(last_sync: str, event_count: int, cal_ok: bool) -> str:
 # ── Gradio tab builder ────────────────────────────────────────────────────────
 
 def build_operating_tab(ctx: AppContext) -> dict:
-    tasks_init = load_tasks(ctx.base_dir)
-    cal_ok_init = (ctx.base_dir / "token.json").exists()
+    # Sync calendar immediately so the page opens with fresh data
+    _init_events, _init_msg = try_google_calendar_sync(ctx.base_dir, None)
+    cal_ok_init = (
+        "failed" not in _init_msg.lower()
+        and "not found" not in _init_msg.lower()
+        and "no calendar" not in _init_msg.lower()
+    )
+    _init_cal_tasks = events_to_cal_tasks(_init_events)
+    try:
+        db.replace_calendar_tasks(_init_cal_tasks)
+    except Exception as exc:
+        print(f"[DB] startup sync failed: {exc}")
+    tasks_init = load_tasks(ctx.base_dir)  # includes fresh calendar tasks
 
     with gr.TabItem("Operating", id="operating"):
 
-        # ── Header ──
-        gr.HTML(f"""
-<div style="font-family:'Inter',sans-serif;padding:18px 32px;
-            border-bottom:1px solid {C_BORDER};background:{C_CARD};
-            display:flex;align-items:center;justify-content:space-between;">
-    <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:20px;font-weight:700;color:{C_WHITE};">SmartMirror</span>
-        <span style="font-size:16px;color:{C_PURPLE};">&nbsp;/ Operating</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:36px;height:36px;border-radius:50%;background:{C_PURPLE};
-                    display:flex;align-items:center;justify-content:center;
-                    font-size:16px;">👤</div>
-        <div>
-            <div style="font-size:14px;font-weight:500;color:{C_WHITE};">Dominik Prokša</div>
-            <div style="font-size:11px;color:{C_GREEN};">Connected</div>
-        </div>
-    </div>
-</div>""")
+        gr.HTML(
+            f'<style>'
+            f'#sm-filter-radio{{position:absolute;left:-9999px;opacity:0;pointer-events:none;}}'
+            f'#sm-task-action{{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0;}}'
+            f'</style>'
+            f'<div style="font-family:Inter,sans-serif;padding:18px 32px;'
+            f'border-bottom:1px solid {C_BORDER};background:{C_CARD};'
+            f'display:flex;align-items:center;justify-content:space-between;">'
+            f'<div style="display:flex;align-items:center;gap:8px;">'
+            f'<span style="font-size:20px;font-weight:700;color:{C_WHITE};">SmartMirror</span>'
+            f'<span style="font-size:16px;color:{C_PURPLE};">&nbsp;/ Operating</span>'
+            f'</div>'
+            f'<div style="display:flex;align-items:center;gap:10px;">'
+            f'<div style="width:36px;height:36px;border-radius:50%;background:{C_PURPLE};'
+            f'display:flex;align-items:center;justify-content:center;font-size:16px;">👤</div>'
+            f'<div>'
+            f'<div style="font-size:14px;font-weight:500;color:{C_WHITE};">Dominik Prokša</div>'
+            f'<div style="font-size:11px;color:{C_GREEN};">Connected</div>'
+            f'</div></div></div>',
+            sanitize_html=False,
+        )
 
         with gr.Row():
-            # ── LEFT COLUMN ──────────────────────────────────────────────────
+            # LEFT: to-do list + today's events
             with gr.Column(scale=1):
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;'
-                    f'text-transform:uppercase;color:{C_CYAN};'
-                    f'padding:24px 0 12px;font-family:Inter,sans-serif;">'
-                    f'To-Do List</div>'
+                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
+                    f'Schedule &amp; Tasks</div>',
+                    sanitize_html=False,
                 )
-
-                filter_tabs = gr.Radio(
-                    choices=["All", "Today", "This Week", "Completed"],
-                    value="All",
+                filter_state = gr.State("Today")
+                filter_radio = gr.Radio(
+                    choices=["Today", "Completed"],
+                    value="Today",
                     label="",
                     container=False,
+                    elem_id="sm-filter-radio",
                 )
-
+                filter_html  = gr.HTML(_render_filter_tabs("Today"), sanitize_html=False)
                 with gr.Row():
                     task_input = gr.Textbox(
                         placeholder="+ Add a new task for today...",
@@ -273,86 +462,81 @@ def build_operating_tab(ctx: AppContext) -> dict:
                     )
                     add_btn = gr.Button("+", size="sm", scale=1, variant="primary")
 
-                tasks_state = gr.State(tasks_init)
-                task_list_html = gr.HTML(render_task_list(tasks_init, "All"))
-
-                gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;'
-                    f'text-transform:uppercase;color:{C_CYAN};'
-                    f'padding:24px 0 12px;font-family:Inter,sans-serif;">'
-                    f'Today\'s Events</div>'
-                )
+                tasks_state    = gr.State(tasks_init)
+                task_action    = gr.Textbox(value="", visible=True, elem_id="sm-task-action", label="", container=False)
+                task_list_html = gr.HTML(render_task_list(tasks_init, "Today"), sanitize_html=False)
 
                 events_state = gr.State(list(SAMPLE_EVENTS))
-                events_html = gr.HTML(render_events_panel(SAMPLE_EVENTS))
 
-            # ── RIGHT COLUMN ─────────────────────────────────────────────────
+            # RIGHT: calendar sync + mirror settings
             with gr.Column(scale=1):
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;'
-                    f'text-transform:uppercase;color:{C_CYAN};'
-                    f'padding:24px 0 12px;font-family:Inter,sans-serif;">'
-                    f'Calendar Sync</div>'
+                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
+                    f'Calendar Sync</div>',
+                    sanitize_html=False,
                 )
-
                 cal_state = gr.State({
                     "ok": cal_ok_init,
                     "last_sync": _last_sync_time,
                     "count": _sync_event_count,
                 })
                 cal_html = gr.HTML(
-                    _cal_card(_last_sync_time, _sync_event_count, cal_ok_init)
+                    _cal_card(_last_sync_time, _sync_event_count, cal_ok_init),
+                    sanitize_html=False,
                 )
                 sync_status = gr.Textbox(
-                    label="Sync status", value="", interactive=False,
-                    visible=False,
+                    label="Sync status", value="", interactive=False, visible=False,
                 )
-                sync_btn = gr.Button("↻ Sync Now", variant="primary", size="sm")
+                with gr.Row():
+                    sync_btn = gr.Button("↻ Sync Now", variant="primary", size="sm")
 
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;'
-                    f'text-transform:uppercase;color:{C_CYAN};'
-                    f'padding:24px 0 12px;font-family:Inter,sans-serif;">'
-                    f'Mirror Settings</div>'
+                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'color:{C_CYAN};padding:20px 0 10px;font-family:Inter,sans-serif;">'
+                    f'Link a Google Calendar</div>'
+                    f'<div style="font-size:13px;color:{C_MUTED};margin-bottom:12px;">'
+                    f'Select a person, then click Link. A browser window will open on this Pi — '
+                    f'the person logs in with their Google account. Only needed once per person.'
+                    f'</div>',
+                    sanitize_html=False,
+                )
+                link_person = gr.Dropdown(
+                    choices=_KNOWN_PEOPLE,
+                    value=_KNOWN_PEOPLE[0],
+                    label="Person",
+                    container=True,
+                )
+                link_btn    = gr.Button("🔗 Link Calendar", variant="secondary", size="sm")
+                link_status = gr.Textbox(
+                    label="Link status", value="", interactive=False, visible=False,
                 )
 
-                brightness = gr.Slider(
-                    minimum=0, maximum=100, value=100, step=1,
-                    label="Display Brightness",
-                )
-                refresh_interval = gr.Slider(
-                    minimum=10, maximum=300, value=60, step=10,
-                    label="Refresh Interval (seconds)",
-                )
-                wake_on_face = gr.Checkbox(value=True, label="Wake on Face Detect")
-                voice_greeting = gr.Checkbox(value=True, label="Voice Greeting")
 
-                gr.HTML(f'<div style="height:16px;"></div>')
-
-        # ── Footer ──
-        gr.HTML(f"""
-<div style="font-family:'Inter',sans-serif;padding:12px 32px;
-            border-top:1px solid {C_BORDER};text-align:right;
-            font-size:12px;color:{C_GREEN};">
-    All systems operational
-</div>""")
+        gr.HTML(
+            f'<div style="font-family:Inter,sans-serif;padding:12px 32px;'
+            f'border-top:1px solid {C_BORDER};text-align:right;'
+            f'font-size:12px;color:{C_GREEN};">All systems operational</div>',
+            sanitize_html=False,
+        )
 
     return {
-        "filter_tabs":      filter_tabs,
+        "filter_state":     filter_state,
+        "filter_radio":     filter_radio,
+        "filter_html":      filter_html,
         "task_input":       task_input,
         "add_btn":          add_btn,
         "tasks_state":      tasks_state,
+        "task_action":      task_action,
         "task_list_html":   task_list_html,
         "events_state":     events_state,
-        "events_html":      events_html,
         "cal_state":        cal_state,
         "cal_html":         cal_html,
         "sync_btn":         sync_btn,
         "sync_status":      sync_status,
-        "brightness":       brightness,
-        "refresh_interval": refresh_interval,
-        "wake_on_face":     wake_on_face,
-        "voice_greeting":   voice_greeting,
+        "link_person":      link_person,
+        "link_btn":         link_btn,
+        "link_status":      link_status,
     }
 
 
@@ -360,55 +544,110 @@ def build_operating_tab(ctx: AppContext) -> dict:
 
 def wire_operating_callbacks(comps: dict, ctx: AppContext) -> None:
 
-    def _add_task(text: str, tasks: list[dict], filter_mode: str):
+    def _add_task(text: str, tasks: list[dict], mode: str):
         if not text.strip():
-            return tasks, render_task_list(tasks, filter_mode), ""
+            return tasks, render_task_list(tasks, mode), ""
         tasks = list(tasks) + [_new_task(text)]
         save_tasks(ctx.base_dir, tasks)
-        return tasks, render_task_list(tasks, filter_mode), ""
+        return tasks, render_task_list(tasks, mode), ""
 
-    comps["add_btn"].click(
-        fn=_add_task,
-        inputs=[comps["task_input"], comps["tasks_state"], comps["filter_tabs"]],
-        outputs=[comps["tasks_state"], comps["task_list_html"], comps["task_input"]],
-        show_progress="hidden",
-    )
+    for evt in (comps["add_btn"].click, comps["task_input"].submit):
+        evt(
+            fn=_add_task,
+            inputs=[comps["task_input"], comps["tasks_state"], comps["filter_state"]],
+            outputs=[comps["tasks_state"], comps["task_list_html"], comps["task_input"]],
+            show_progress="hidden",
+        )
 
-    comps["task_input"].submit(
-        fn=_add_task,
-        inputs=[comps["task_input"], comps["tasks_state"], comps["filter_tabs"]],
-        outputs=[comps["tasks_state"], comps["task_list_html"], comps["task_input"]],
-        show_progress="hidden",
-    )
+    def _filter_change(tasks: list[dict], mode: str):
+        return mode, render_task_list(tasks, mode), _render_filter_tabs(mode)
 
-    def _filter_change(tasks: list[dict], filter_mode: str):
-        return render_task_list(tasks, filter_mode)
-
-    comps["filter_tabs"].change(
+    comps["filter_radio"].change(
         fn=_filter_change,
-        inputs=[comps["tasks_state"], comps["filter_tabs"]],
-        outputs=[comps["task_list_html"]],
+        inputs=[comps["tasks_state"], comps["filter_radio"]],
+        outputs=[comps["filter_state"], comps["task_list_html"], comps["filter_html"]],
         show_progress="hidden",
     )
 
-    def _sync_calendar(cal_state: dict, ev_state: list[dict]):
-        events, msg = try_google_calendar_sync(ctx.base_dir)
-        now_str = datetime.now().strftime("%H:%M:%S")
-        new_cal = {"ok": "failed" not in msg.lower() and "not found" not in msg.lower(),
-                   "last_sync": now_str, "count": len(events)}
-        new_cal_html = _cal_card(now_str, len(events), new_cal["ok"])
-        new_ev_html = render_events_panel(events)
-        return new_cal, new_cal_html, events, new_ev_html, msg
+    def _toggle_task(task_id: str, tasks: list[dict], mode: str):
+        if not task_id:
+            return tasks, render_task_list(tasks, mode), ""
+        new_tasks = []
+        for t in tasks:
+            if t["id"] == task_id:
+                toggled = {**t, "completed": not t["completed"]}
+                # When marking a calendar event done, remove it from Google Calendar too
+                if toggled["completed"] and t.get("source") == "calendar":
+                    from ui.sm_display import _current_user
+                    delete_google_calendar_event(
+                        ctx.base_dir,
+                        _current_user or None,
+                        t.get("gcal_event_id", ""),
+                    )
+                    try:
+                        db.delete_task(t["id"])
+                    except Exception as exc:
+                        print(f"[DB] delete_task failed: {exc}")
+                new_tasks.append(toggled)
+            else:
+                new_tasks.append(t)
+        save_tasks(ctx.base_dir, new_tasks)
+        return new_tasks, render_task_list(new_tasks, mode), ""
+
+    comps["task_action"].change(
+        fn=_toggle_task,
+        inputs=[comps["task_action"], comps["tasks_state"], comps["filter_state"]],
+        outputs=[comps["tasks_state"], comps["task_list_html"], comps["task_action"]],
+        show_progress="hidden",
+    )
+
+    def _sync_calendar(cal_state: dict, ev_state: list[dict], tasks: list[dict], mode: str):
+        from ui.sm_display import _current_user
+        name   = _current_user or None
+        events, msg = try_google_calendar_sync(ctx.base_dir, name)
+        now_str   = datetime.now().strftime("%H:%M:%S")
+        ok        = "failed" not in msg.lower() and "not found" not in msg.lower() and "no calendar" not in msg.lower()
+        new_cal   = {"ok": ok, "last_sync": now_str, "count": len(events)}
+        cal_tasks = events_to_cal_tasks(events)
+        user_tasks = [t for t in tasks if t.get("source") != "calendar"]
+        new_tasks = user_tasks + cal_tasks
+        try:
+            db.replace_calendar_tasks(cal_tasks)
+        except Exception as exc:
+            print(f"[DB] replace_calendar_tasks failed: {exc}")
+        return (
+            new_cal,
+            _cal_card(now_str, len(events), ok),
+            events,
+            new_tasks,
+            render_task_list(new_tasks, mode),
+            msg,
+        )
 
     comps["sync_btn"].click(
         fn=_sync_calendar,
-        inputs=[comps["cal_state"], comps["events_state"]],
+        inputs=[comps["cal_state"], comps["events_state"], comps["tasks_state"], comps["filter_state"]],
         outputs=[
             comps["cal_state"],
             comps["cal_html"],
             comps["events_state"],
-            comps["events_html"],
+            comps["tasks_state"],
+            comps["task_list_html"],
             comps["sync_status"],
         ],
+        show_progress="hidden",
+    )
+
+    def _link_calendar(name: str):
+        msg = link_google_calendar(ctx.base_dir, name)
+        ok  = "linked" in msg.lower()
+        return gr.update(value=msg, visible=True), gr.update(
+            value=msg, visible=True,
+        )
+
+    comps["link_btn"].click(
+        fn=_link_calendar,
+        inputs=[comps["link_person"]],
+        outputs=[comps["link_status"], comps["sync_status"]],
         show_progress="hidden",
     )

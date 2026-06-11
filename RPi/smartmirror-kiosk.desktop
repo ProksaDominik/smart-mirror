@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=SmartMirror Kiosk
+Exec=/home/student/2025-26-projectone-ctai-ProksaDominik/RPi/start_kiosk.sh
+X-GNOME-Autostart-enabled=true

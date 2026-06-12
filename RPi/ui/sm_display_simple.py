@@ -1,7 +1,16 @@
 """SmartMirror — Mirror tab.
 
-Layout: narrow left panel (clock only) | pure black empty center | narrow right panel (weather only).
-The center represents the physical two-way mirror surface — no camera feed here.
+Portrait layout (single column, fills 100 vh):
+  ┌─────────────────┐
+  │  HH:MM  AM/PM   │  ← clock
+  │  Day, DD Month  │
+  ├─────────────────┤
+  │ TODAY'S SCHEDULE│  ← events
+  ├─────────────────┤
+  │                 │  ← black mirror area (flex: 1)
+  ├─────────────────┤
+  │  🌡 22°C Cloudy │  ← weather
+  └─────────────────┘
 """
 
 from __future__ import annotations
@@ -17,125 +26,131 @@ from ui.sm_display import (
 )
 from ui.smartmirror_theme import (
     C_BORDER,
-    C_CARD,
     C_CYAN,
-    C_MUTED,
 )
 
-_PANEL_W = 240  # px
 
+def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
+    w = _parse_weather(weather_data)
+    M = "#C8C8DC"  # brighter muted for LCD visibility
 
-def _render_left(events: list[dict]) -> str:
     events_html = ""
-    for ev in events[:6]:
+    for ev in events[:3]:
         t      = ev.get("time", "")
         title  = ev.get("title", "")
         active = ev.get("active", False)
-        border = f"border-left:2px solid {C_CYAN};" if active else ""
-        bg     = "background:rgba(0,245,255,0.05);" if active else ""
-        events_html += f"""
-        <div style="{bg}border-radius:6px;padding:7px 10px;margin-bottom:5px;{border}">
-            <div style="font-size:10px;color:{C_MUTED};margin-bottom:1px;">{t}</div>
-            <div style="font-size:12px;color:#fff;line-height:1.3;">{title}</div>
-        </div>"""
-
-    return f"""
-<div style="font-family:'Inter',sans-serif;background:#000;height:100%;
-            padding:24px 16px;color:#fff;border-right:1px solid {C_BORDER};">
-    <div id="sm2-time" style="font-size:52px;font-weight:300;letter-spacing:-2px;line-height:1;">--:--</div>
-    <div id="sm2-date" style="font-size:11px;color:{C_MUTED};margin-top:6px;"></div>
-    <div id="sm2-ampm" style="display:inline-block;border:1px solid {C_CYAN};color:{C_CYAN};
-                font-size:9px;padding:1px 7px;border-radius:3px;
-                margin-top:6px;letter-spacing:.06em;"></div>
-    <div style="margin-top:20px;">
-        <div style="font-size:9px;letter-spacing:.12em;text-transform:uppercase;
-                    color:{C_CYAN};margin-bottom:8px;">Today's Schedule</div>
-        {events_html or f'<div style="color:{C_MUTED};font-size:11px;">No events today.</div>'}
-    </div>
-</div>"""
-
-
-def _render_right(weather_data: dict | None) -> str:
-    w = _parse_weather(weather_data)
+        border = f"border-left:2px solid {C_CYAN};padding-left:12px;" if active else "padding-left:14px;"
+        color  = "#fff" if active else M
+        events_html += (
+            f'<div style="display:flex;align-items:baseline;gap:16px;'
+            f'margin-bottom:12px;{border}">'
+            f'<span style="font-size:14px;color:{C_CYAN};min-width:44px;font-weight:300;">{t}</span>'
+            f'<span style="font-size:16px;color:{color};line-height:1.3;font-weight:300;">{title}</span>'
+            f'</div>'
+        )
 
     forecast_html = ""
     for fc in w["forecast"]:
-        forecast_html += f"""
-        <div style="text-align:center;flex:1;">
-            <div style="font-size:9px;color:{C_MUTED};letter-spacing:.06em;
-                        text-transform:uppercase;">{_day_abbr(fc['date'])}</div>
-            <div style="font-size:16px;margin:3px 0;">{fc['icon']}</div>
-            <div style="font-size:11px;color:#fff;">{fc['min']}°</div>
-        </div>"""
+        forecast_html += (
+            f'<div style="text-align:center;flex:1;">'
+            f'<div style="font-size:11px;color:{M};letter-spacing:.06em;'
+            f'text-transform:uppercase;margin-bottom:4px;">{_day_abbr(fc["date"])}</div>'
+            f'<div style="font-size:14px;color:#fff;">{fc["min"]}°</div>'
+            f'</div>'
+        )
 
     return f"""
-<div style="font-family:'Inter',sans-serif;background:#000;height:100%;
-            padding:24px 16px;color:#fff;border-left:1px solid {C_BORDER};">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-        <span style="font-size:32px;line-height:1;">{w['icon']}</span>
-        <div>
-            <div style="font-size:28px;font-weight:300;line-height:1;">{w['temp_c']}°C</div>
-            <div style="font-size:10px;color:{C_MUTED};margin-top:3px;">{w['desc']}</div>
-            <div style="font-size:10px;color:{C_MUTED};">{w['city']}, {w['country']}</div>
-        </div>
+<div style="
+    font-family:'Inter',sans-serif;
+    background:#000;
+    color:#fff;
+    height:100vh;
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    padding:44px 40px 36px;
+    box-sizing:border-box;
+    overflow:hidden;
+">
+
+  <!-- Clock — flex:2 -->
+  <div style="flex:2;display:flex;flex-direction:column;justify-content:center;min-height:0;">
+    <div style="display:flex;align-items:flex-end;gap:16px;">
+      <div id="sm2-time"
+           style="font-size:100px;font-weight:400;letter-spacing:-4px;line-height:1;color:#fff;">
+        --:--
+      </div>
+      <div id="sm2-ampm"
+           style="font-size:16px;color:{C_CYAN};border:1px solid {C_CYAN};
+                  border-radius:4px;padding:4px 10px;margin-bottom:16px;
+                  letter-spacing:.1em;">
+      </div>
     </div>
-    <div style="border-top:1px solid {C_BORDER};padding-top:10px;
-                display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <div>
-            <div style="font-size:8px;color:{C_MUTED};text-transform:uppercase;
-                        letter-spacing:.05em;">Feels</div>
-            <div style="font-size:12px;margin-top:2px;">{w['feels_c']}°C</div>
-        </div>
-        <div>
-            <div style="font-size:8px;color:{C_MUTED};text-transform:uppercase;
-                        letter-spacing:.05em;">Humidity</div>
-            <div style="font-size:12px;margin-top:2px;">{w['humidity']}%</div>
-        </div>
-        <div>
-            <div style="font-size:8px;color:{C_MUTED};text-transform:uppercase;
-                        letter-spacing:.05em;">Wind</div>
-            <div style="font-size:12px;margin-top:2px;">{w['wind_kmph']} km/h</div>
-        </div>
-        <div>
-            <div style="font-size:8px;color:{C_MUTED};text-transform:uppercase;
-                        letter-spacing:.05em;">UV</div>
-            <div style="font-size:12px;margin-top:2px;">{w['uv']}</div>
-        </div>
+    <div id="sm2-date"
+         style="font-size:18px;color:{M};margin-top:6px;font-weight:300;letter-spacing:.02em;">
     </div>
-    {f'<div style="border-top:1px solid {C_BORDER};margin-top:10px;padding-top:10px;display:flex;">' + forecast_html + '</div>' if forecast_html else ''}
+  </div>
+
+  <!-- Today's Schedule — flex:1 -->
+  <div style="flex:1;min-height:0;overflow:hidden;">
+    <div style="font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+                color:{C_CYAN};margin-bottom:12px;
+                border-bottom:1px solid rgba(0,245,255,0.2);padding-bottom:6px;">
+      Today's Schedule
+    </div>
+    {events_html or f'<div style="color:{M};font-size:15px;font-weight:300;">No events today.</div>'}
+  </div>
+
+  <!-- Mirror area — flex:5 (dominant section, the physical glass) -->
+  <div style="flex:5;min-height:0;"></div>
+
+  <!-- Weather — flex:2 -->
+  <div style="flex:2;min-height:0;display:flex;flex-direction:column;justify-content:center;">
+    <div style="font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+                color:{C_CYAN};margin-bottom:12px;
+                border-top:1px solid rgba(0,245,255,0.2);padding-top:12px;">
+      Weather
+    </div>
+    <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:14px;">
+      <div style="font-size:56px;font-weight:400;line-height:1;color:#fff;">{w['temp_c']}°C</div>
+      <div>
+        <div style="font-size:16px;color:#fff;font-weight:300;">{w['desc']}</div>
+        <div style="font-size:13px;color:{M};margin-top:2px;">{w['city']}, {w['country']}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div>
+        <div style="font-size:10px;color:{M};text-transform:uppercase;letter-spacing:.06em;">Feels</div>
+        <div style="font-size:18px;margin-top:3px;font-weight:500;color:#fff;">{w['feels_c']}°</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:{M};text-transform:uppercase;letter-spacing:.06em;">Humidity</div>
+        <div style="font-size:18px;margin-top:3px;font-weight:500;color:#fff;">{w['humidity']}%</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:{M};text-transform:uppercase;letter-spacing:.06em;">Wind</div>
+        <div style="font-size:18px;margin-top:3px;font-weight:500;color:#fff;">{w['wind_kmph']} km/h</div>
+      </div>
+      <div>
+        <div style="font-size:10px;color:{M};text-transform:uppercase;letter-spacing:.06em;">UV</div>
+        <div style="font-size:18px;margin-top:3px;font-weight:500;color:#fff;">{w['uv']}</div>
+      </div>
+    </div>
+    {f'<div style="display:flex;gap:16px;">{forecast_html}</div>' if forecast_html else ''}
+  </div>
+
 </div>"""
-
-
-def render_display_simple(
-    weather_data: dict | None,
-    events: list[dict],
-) -> tuple[str, str]:
-    return _render_left(events), _render_right(weather_data)
 
 
 def build_display_simple_tab(ctx: AppContext, initial_weather=None) -> dict:
     with gr.TabItem("Mirror", id="mirror", render_children=False):
-        with gr.Row(equal_height=True):
-            with gr.Column(min_width=_PANEL_W, scale=0):
-                left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
-            with gr.Column(scale=3):
-                gr.HTML(
-                    '<div style="background:#000;height:100%;min-height:80vh;'
-                    'display:flex;align-items:center;justify-content:center;">'
-                    f'<div style="width:60%;height:2px;background:{C_BORDER};'
-                    f'opacity:0.3;"></div></div>',
-                    sanitize_html=False,
-                )
-            with gr.Column(min_width=_PANEL_W, scale=0):
-                right_html = gr.HTML(_render_right(initial_weather), sanitize_html=False)
-
+        mirror_html   = gr.HTML(render_mirror(initial_weather, SAMPLE_EVENTS), sanitize_html=False)
         weather_state = gr.State(initial_weather)
         events_state  = gr.State(list(SAMPLE_EVENTS))
         weather_timer = gr.Timer(value=300.0, active=True)
 
     return {
-        "left_html":     left_html,
-        "right_html":    right_html,
+        "mirror_html":   mirror_html,
         "weather_state": weather_state,
         "events_state":  events_state,
         "weather_timer": weather_timer,
@@ -145,11 +160,11 @@ def build_display_simple_tab(ctx: AppContext, initial_weather=None) -> dict:
 def wire_display_simple_callbacks(comps: dict, ctx: AppContext) -> None:
     def _weather_tick(w, ev):
         new_w = fetch_weather()
-        return _render_right(new_w), new_w
+        return render_mirror(new_w, ev), new_w
 
     comps["weather_timer"].tick(
         fn=_weather_tick,
         inputs=[comps["weather_state"], comps["events_state"]],
-        outputs=[comps["right_html"], comps["weather_state"]],
+        outputs=[comps["mirror_html"], comps["weather_state"]],
         show_progress="hidden",
     )

@@ -22,7 +22,7 @@ from ui.sm_display import (
 )
 from ui.sm_display_simple import (
     build_display_simple_tab,
-    render_display_simple,
+    render_mirror,
     wire_display_simple_callbacks,
 )
 from ui.sm_operating import build_operating_tab, wire_operating_callbacks
@@ -126,6 +126,19 @@ _KIOSK_JS = """
         // Hide the tab nav bar so only the mirror content is visible
         var nav = document.querySelector('.tab-nav');
         if (nav) nav.style.setProperty('display', 'none', 'important');
+        // Remove all Gradio padding so the mirror fills 100vh
+        var container = document.querySelector('.gradio-container');
+        if (container) {
+            container.style.setProperty('padding', '0', 'important');
+            container.style.setProperty('margin', '0', 'important');
+            container.style.setProperty('height', '100vh', 'important');
+            container.style.setProperty('overflow', 'hidden', 'important');
+        }
+        // Also remove padding from tabitem wrapper
+        document.querySelectorAll('.tabitem,.tab-content').forEach(function(el) {
+            el.style.setProperty('padding', '0', 'important');
+            el.style.setProperty('height', '100vh', 'important');
+        });
         // Remove scrollbars
         document.documentElement.style.overflow = 'hidden';
         document.body.style.overflow = 'hidden';
@@ -220,9 +233,9 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             show_progress="hidden",
         )
         operating_comps["events_state"].change(
-            fn=lambda ev, w: render_display_simple(w, ev),
+            fn=lambda ev, w: render_mirror(w, ev),
             inputs=[operating_comps["events_state"], mirror_comps["weather_state"]],
-            outputs=[mirror_comps["left_html"], mirror_comps["right_html"]],
+            outputs=[mirror_comps["mirror_html"]],
             show_progress="hidden",
         )
 

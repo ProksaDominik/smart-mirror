@@ -510,6 +510,16 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
     }
 
 
+def _welcome_audio(name: str) -> None:
+    """Speak a personalised greeting and play music. Runs in a daemon thread."""
+    try:
+        from ui import voice as _voice
+        msg = f"{_time_period()}, {name}! Welcome to your SmartMirror."
+        _voice.speak(msg)
+    except Exception as exc:
+        print(f"[Welcome audio] {exc}")
+
+
 def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
     # Reset module-level voting state so each app start is a fresh scan.
     global _votes, _confirmed_name, _confirmed_at
@@ -544,6 +554,7 @@ def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
                 name = summary[len(prefix):]
                 _current_user = name
                 _state["done"] = True
+                threading.Thread(target=_welcome_audio, args=(name,), daemon=True).start()
                 return _recognised_html(name), name
 
         return _NOOP   # Still scanning — touch nothing

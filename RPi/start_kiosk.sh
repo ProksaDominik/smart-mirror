@@ -1,34 +1,36 @@
 #!/bin/bash
-# Opens Chromium in kiosk mode on the SmartMirror Mirror tab.
-# Run this after the Gradio app is already started, or together with it:
-#   ./main.py &
+# Starts the SmartMirror Gradio app and opens Chromium on the Mirror tab.
+# No desktop environment needed — uses cage (Wayland kiosk compositor).
+#
+# First-time setup (one command):
+#   sudo apt install -y cage
+#
+# Then just run:
 #   ./start_kiosk.sh
 
-PORT=8500
-URL="http://localhost:${PORT}?kiosk"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+MAIN_PORT=8500   # main dashboard (management)
+KIOSK_PORT=8501  # mirror-only display for the LCD
+URL="http://localhost:${KIOSK_PORT}"
 
-echo "[kiosk] Waiting for Gradio on port ${PORT}..."
-until curl -s --max-time 2 "http://localhost:${PORT}" > /dev/null 2>&1; do
+# ── 1. Start the Gradio app in the background if not already running ──────────
+if ! curl -s --max-time 1 "http://localhost:${MAIN_PORT}" > /dev/null 2>&1; then
+    echo "[kiosk] Starting Gradio app..."
+    cd "$REPO_DIR"
+    python app.py &> /tmp/smartmirror.log &
+    echo "[kiosk] Gradio PID: $!"
+fi
+
+# ── 2. Wait for the kiosk server to be ready ─────────────────────────────────
+echo "[kiosk] Waiting for kiosk display on port ${KIOSK_PORT}..."
+for i in $(seq 1 60); do
+    curl -s --max-time 2 "http://localhost:${KIOSK_PORT}" > /dev/null 2>&1 && break
     sleep 1
 done
 echo "[kiosk] Server ready — launching Chromium."
 
-# Use the first available display (works on desktop Raspberry Pi OS)
-export DISPLAY="${DISPLAY:-:0}"
+# ── 3. Launch via cage (Wayland kiosk compositor — no desktop needed) ─────────
+export LIBSEAT_BACKEND=seatd
+export WLR_RENDERER=gles2
 
-# Disable screen blanking / power saving
-xset s off 2>/dev/null
-xset -dpms 2>/dev/null
-xset s noblank 2>/dev/null
-
-exec chromium-browser \
-    --kiosk \
-    --noerrdialogs \
-    --disable-infobars \
-    --no-first-run \
-    --disable-translate \
-    --disable-features=TranslateUI \
-    --disable-session-crashed-bubble \
-    --check-for-update-interval=604800 \
-    --disable-pinch \
-    "${URL}"
+exec cage -- "$REPO_DIR/launch_mirror.sh"

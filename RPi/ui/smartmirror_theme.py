@@ -73,14 +73,9 @@ footer { display: none !important; }
 }
 
 /* ── Remove default Gradio block chrome ───────────────────────────────────── */
-.block,
-.gap,
-.form {
+.block {
     background: transparent !important;
     border: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    gap: 0 !important;
     box-shadow: none !important;
 }
 
@@ -114,6 +109,20 @@ textarea:focus {
 
 /* ── Gradio HTML wrapper reset ───────────────────────────────────────────── */
 .html-container { padding: 0 !important; }
+
+/* ── Kill Gradio streaming animations (prevent greeting from flashing) ───── */
+/* Gradio adds .generating / .pending during every stream tick, which applies
+   a pulsing border and opacity animation. Suppress all of it globally so
+   gr.HTML components never visually react to background stream activity. */
+.generating,
+.generating *,
+.pending,
+.pending * {
+    animation: none !important;
+    transition: none !important;
+    border-color: transparent !important;
+}
+.block.generating { border: none !important; box-shadow: none !important; }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }

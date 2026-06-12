@@ -26,21 +26,15 @@ services:
       timeout: 5s
       retries: 5
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: ctai-pgadmin
+  adminer:
+    image: adminer:latest
+    container_name: ctai-adminer
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-student@howest.be}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-ctai}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
     ports:
-      - "5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
+      - "8080:8080"
 
   api:
     build: .

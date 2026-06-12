@@ -1,7 +1,8 @@
-"""SmartMirror — Getting Started tab (setup wizard).
+"""SmartMirror — Getting Started tab.
 
-Shows the four onboarding steps with live completion status derived from
-the actual system state (camera open, face dataset photos, Calendar token).
+Explains the system and shows live completion status for each setup step.
+The face recognition model is pre-trained on a fixed set of people; no
+in-app face registration is possible without retraining the YOLO model.
 """
 
 from __future__ import annotations
@@ -18,38 +19,24 @@ from ui.smartmirror_theme import (
     C_CYAN,
     C_GREEN,
     C_MUTED,
-    C_PURPLE,
     C_RED,
     C_WHITE,
     divider,
 )
 
-# ── Step status helpers ───────────────────────────────────────────────────────
+_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "Laptop" / "best.pt"
 
-def _camera_ready(ctx: AppContext) -> bool:
-    try:
-        from inputs.registry import INPUT_RPI_CAMERA
-        provider = ctx.providers.get(INPUT_RPI_CAMERA)
-        if provider is None:
-            return False
-        result = provider.sync_preview("320x240", 1.0, None, None, None)
-        return result.frame_rgb is not None
-    except Exception:
-        return False
+# Names the YOLO model was trained to recognise — fixed at training time.
+_KNOWN_PEOPLE = ["Dominik", "JP", "Joao", "Liviu", "Lloyd", "Michal", "Radu"]
 
 
-def _face_dataset_count(base_dir: Path) -> int:
-    dataset = base_dir / "dataset" / "faces"
-    if not dataset.exists():
-        return 0
-    return sum(1 for _ in dataset.rglob("*.jpg")) + sum(1 for _ in dataset.rglob("*.png"))
+def _model_exists() -> bool:
+    return _MODEL_PATH.exists()
 
 
 def _calendar_token_exists(base_dir: Path) -> bool:
     return (base_dir / "token.json").exists() or (base_dir / "data" / "token.json").exists()
 
-
-# ── Step card renderer ────────────────────────────────────────────────────────
 
 def _step_card(
     number: str,
@@ -66,7 +53,6 @@ def _step_card(
         )
         badge_html = ""
         border = f"border:1px solid {C_BORDER};"
-        num_color = C_MUTED
     elif state == "active":
         num_html = (
             f'<div style="font-size:22px;font-weight:600;color:{C_CYAN};'
@@ -75,10 +61,9 @@ def _step_card(
         badge_html = (
             f'<span style="border:1px solid {C_CYAN};color:{C_CYAN};'
             f'font-size:10px;letter-spacing:.1em;text-transform:uppercase;'
-            f'padding:3px 10px;border-radius:20px;">In Progress</span>'
+            f'padding:3px 10px;border-radius:20px;">Action Required</span>'
         )
         border = f"border:2px solid {C_CYAN};"
-        num_color = C_CYAN
     else:
         num_html = (
             f'<div style="font-size:22px;font-weight:600;color:{C_BORDER};'
@@ -86,10 +71,9 @@ def _step_card(
         )
         badge_html = ""
         border = f"border:1px solid {C_BORDER};"
-        num_color = C_MUTED
 
     title_color = C_WHITE if state != "pending" else C_MUTED
-    desc_color = C_MUTED if state == "pending" else "#ccc"
+    desc_color  = C_MUTED if state == "pending" else "#ccc"
 
     return f"""
 <div style="background:{C_CARD};{border}border-radius:12px;padding:24px;margin-bottom:16px;">
@@ -100,14 +84,22 @@ def _step_card(
                 <div style="font-size:18px;font-weight:600;color:{title_color};">{title}</div>
                 {badge_html}
             </div>
-            <div style="font-size:14px;color:{desc_color};line-height:1.6;">
-                {description}</div>
+            <div style="font-size:14px;color:{desc_color};line-height:1.6;">{description}</div>
         </div>
     </div>
 </div>"""
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+def _people_pills() -> str:
+    pills = "".join(
+        f'<span style="display:inline-block;background:rgba(0,245,255,0.12);'
+        f'border:1px solid {C_CYAN};color:{C_CYAN};border-radius:20px;'
+        f'padding:4px 14px;font-size:13px;font-weight:500;margin:4px 4px 4px 0;">'
+        f'{name}</span>'
+        for name in _KNOWN_PEOPLE
+    )
+    return f'<div style="margin-top:12px;">{pills}</div>'
+
 
 _SIDEBAR = f"""
 <div style="font-family:'Inter',sans-serif;padding:40px 32px;
@@ -129,7 +121,18 @@ _SIDEBAR = f"""
     {divider()}
 
     <ul style="list-style:none;padding:0;margin:0 0 32px;">
-        {"".join(f'<li style="font-size:14px;color:{C_WHITE};padding:7px 0;display:flex;align-items:center;gap:10px;"><span style="width:8px;height:8px;border-radius:50%;background:{C_CYAN};display:inline-block;"></span>{feat}</li>' for feat in ["Recognises your face in seconds", "Shows your daily schedule & tasks", "Live weather & temperature", "Syncs with Google Calendar"])}
+        {"".join(
+            f'<li style="font-size:14px;color:{C_WHITE};padding:7px 0;display:flex;'
+            f'align-items:center;gap:10px;">'
+            f'<span style="width:8px;height:8px;border-radius:50%;background:{C_CYAN};'
+            f'display:inline-block;"></span>{feat}</li>'
+            for feat in [
+                "Recognises your face in seconds",
+                "Shows your daily schedule &amp; tasks",
+                "Live weather &amp; temperature",
+                "Syncs with Google Calendar",
+            ]
+        )}
     </ul>
 
     {divider()}
@@ -144,36 +147,41 @@ _SIDEBAR = f"""
 </div>"""
 
 
-# ── Page HTML renderer ────────────────────────────────────────────────────────
-
 def render_about(
     cam_ok: bool,
-    photo_count: int,
+    model_ok: bool,
     calendar_ok: bool,
 ) -> str:
-    # Derive step states
-    step1 = "done" if cam_ok else "active"
-    step2 = "done" if photo_count >= 100 else ("active" if cam_ok else "pending")
-    step3 = "done" if calendar_ok else ("active" if photo_count >= 100 else "pending")
-    step4 = "done" if (cam_ok and photo_count >= 100 and calendar_ok) else "pending"
+    step1 = "done" if cam_ok    else "active"
+    step2 = "done" if model_ok  else "active"
+    step3 = "done" if calendar_ok else ("active" if model_ok else "pending")
+    step4 = "done" if (cam_ok and model_ok and calendar_ok) else "pending"
 
-    photo_note = ""
-    if step2 == "active":
-        pct = min(int(photo_count / 100 * 100), 100)
-        photo_note = (
-            f'<br><span style="color:{C_CYAN};">{photo_count}/100 photos captured</span>'
-            f' <span style="color:{C_MUTED};">({pct}%)</span>'
+    model_note = ""
+    if not model_ok:
+        model_note = (
+            f'<br><span style="color:{C_RED};">Model file not found: '
+            f'<code style="font-size:12px;background:{C_CARD};padding:1px 5px;'
+            f'border-radius:3px;">Laptop/best.pt</code></span>'
         )
+
+    step2_desc = (
+        "This mirror uses a YOLO model trained on a fixed set of people. "
+        "It cannot learn new faces without retraining. "
+        "The people it currently recognises are shown below. "
+        "If your face is not in this list you will see "
+        "<b style='color:#fff;'>Unregistered face recognized</b> on the Display tab."
+        f"{model_note}"
+        f"{_people_pills()}"
+    )
 
     return f"""
 <div style="font-family:'Inter',sans-serif;background:{C_BG};
             min-height:calc(100vh - 48px);display:grid;
             grid-template-columns:360px 1fr;">
 
-    <!-- Sidebar -->
     {_SIDEBAR}
 
-    <!-- Main -->
     <div style="padding:48px 56px;">
         <div style="font-size:40px;font-weight:700;color:{C_WHITE};
                     margin-bottom:8px;">Getting Started</div>
@@ -181,19 +189,17 @@ def render_about(
             Complete these steps to activate your SmartMirror</div>
 
         {_step_card("01", "Connect Your Device",
-            "Power on the Raspberry Pi and connect the 10.1\" LCD via HDMI. "
+            'Power on the Raspberry Pi and connect the 10.1" LCD via HDMI. '
             "Attach the USB camera module and verify the connection.",
             step1)}
 
-        {_step_card("02", "Register Your Face",
-            "Stand before the mirror and press the hardware button. The YOLO model "
-            f"captures 100 photos to build your unique face profile.{photo_note}",
+        {_step_card("02", "Recognised Users",
+            step2_desc,
             step2)}
 
         {_step_card("03", "Sync Google Calendar",
-            "Authorise the SmartMirror on your phone to pull daily events and to-do "
-            "items from Google Calendar automatically. Place <code "
-            f"style='background:{C_CARD};padding:1px 5px;border-radius:3px;"
+            "Authorise the SmartMirror to pull daily events from Google Calendar. "
+            "Place <code style='background:{C_CARD};padding:1px 5px;border-radius:3px;"
             "font-size:12px;'>credentials.json</code> in the RPi folder, "
             "then click <b>Sync Now</b> in the Operating tab.",
             step3)}
@@ -206,28 +212,24 @@ def render_about(
 </div>"""
 
 
-# ── Gradio tab builder ────────────────────────────────────────────────────────
-
 def build_about_tab(ctx: AppContext) -> dict:
-    with gr.TabItem("Getting Started", id="about"):
+    with gr.TabItem("Getting Started", id="about", render_children=False):
         about_html = gr.HTML(
-            render_about(cam_ok=False, photo_count=0, calendar_ok=False)
+            render_about(cam_ok=True, model_ok=_model_exists(), calendar_ok=False),
+            sanitize_html=False,
         )
-        refresh_btn = gr.Button(
-            "↻ Refresh status",
-            size="sm",
-            variant="secondary",
-        )
+        refresh_btn = gr.Button("↻ Refresh status", size="sm", variant="secondary")
 
     return {"about_html": about_html, "refresh_btn": refresh_btn}
 
 
 def wire_about_callbacks(comps: dict, ctx: AppContext) -> None:
     def _refresh():
-        cam = _camera_ready(ctx)
-        photos = _face_dataset_count(ctx.base_dir)
-        cal = _calendar_token_exists(ctx.base_dir)
-        return render_about(cam, photos, cal)
+        return render_about(
+            cam_ok=True,
+            model_ok=_model_exists(),
+            calendar_ok=_calendar_token_exists(ctx.base_dir),
+        )
 
     comps["refresh_btn"].click(
         fn=_refresh,
@@ -235,5 +237,3 @@ def wire_about_callbacks(comps: dict, ctx: AppContext) -> None:
         outputs=[comps["about_html"]],
         show_progress="hidden",
     )
-
-    # Also refresh on page load (via the demo.load callback — wired in dashboard)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import db
 from config import AppConfig
 from core.runtime_snapshot import RuntimeSnapshot
 from core.state import SharedState
@@ -16,6 +17,8 @@ def bootstrap_app(cfg: AppConfig | None = None) -> AppContext:
     """Load LCD, models, and input providers. GPIO shutdown is started when the UI is ready."""
     cfg = cfg or AppConfig()
     base_dir = Path(__file__).resolve().parent.parent
+
+    db.init_db()
 
     lcd = create_lcd(cfg)
     start_lcd_startup_display(cfg, lcd)

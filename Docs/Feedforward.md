@@ -57,13 +57,13 @@ This is the feedback on my questions.
 - Feedback 1: frame will be made out of wood and enclosure from acrylic pvc.
 
 
-## Conversation 3 (Date: 00/00/2026)
+## Conversation 3 (Date: 09/06/2026)
 
-Lecturer: 
-Questions for this conversation: 
+Lecturer: Geert
+Questions for this conversation: what kind of sepaker should I use for my project 
 
-- [x] Question 1: V
+- [x] Question 1: what kind of sepaker should I use for my project ?
 
 This is the feedback on my questions.
 
-- Feedback 1: G
+- Feedback 1: You should use usb speaker since its the easiest way.

@@ -10,6 +10,7 @@ import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import gradio as gr
 
@@ -394,6 +395,72 @@ def _cal_card(last_sync: str, event_count: int, cal_ok: bool) -> str:
 </div>"""
 
 
+# ── Database table renderer ───────────────────────────────────────────────────
+
+def _hex_to_rgb(h: str) -> str:
+    h = h.lstrip("#")
+    return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
+
+
+def _render_db_table(tasks: list[dict]) -> str:
+    if not tasks:
+        return (
+            f'<div style="font-family:Inter,sans-serif;color:{C_MUTED};'
+            f'text-align:center;padding:32px;font-size:14px;">No tasks in database.</div>'
+        )
+    header = (
+        f'<div style="display:grid;grid-template-columns:1fr 110px 90px 90px 80px;'
+        f'gap:8px;padding:8px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;'
+        f'text-transform:uppercase;color:{C_MUTED};border-bottom:1px solid {C_BORDER};">'
+        f'<div>Task</div><div>Due</div><div>Source</div><div>Status</div><div>Action</div></div>'
+    )
+    rows = ""
+    for t in tasks:
+        text = t.get("text") or t.get("task_text") or ""
+        due  = t.get("due", "")
+        done = t.get("completed", False)
+        src  = t.get("source", "user")
+        tid  = t["id"]
+        strike = f"text-decoration:line-through;color:{C_MUTED};" if done else f"color:{C_WHITE};"
+        src_color = C_CYAN if src == "calendar" else C_PURPLE
+        src_label = "Calendar" if src == "calendar" else "User"
+        src_badge = (
+            f'<span style="font-size:11px;padding:2px 8px;border-radius:4px;'
+            f'background:rgba({_hex_to_rgb(src_color)},0.15);color:{src_color};font-weight:600;">'
+            f'{src_label}</span>'
+        )
+        status_badge = (
+            f'<span style="font-size:11px;padding:2px 8px;border-radius:4px;'
+            f'background:rgba(0,255,136,0.12);color:{C_GREEN};font-weight:600;">Done</span>'
+            if done else
+            f'<span style="font-size:11px;padding:2px 8px;border-radius:4px;'
+            f'background:rgba(0,245,255,0.10);color:{C_CYAN};font-weight:600;">Pending</span>'
+        )
+        del_js = (
+            f"(function(){{var el=document.querySelector('#sm-db-delete textarea,#sm-db-delete input');"
+            f"if(!el)return;"
+            f"var p=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;"
+            f"Object.getOwnPropertyDescriptor(p,'value').set.call(el,'{tid}');"
+            f"el.dispatchEvent(new Event('input',{{bubbles:true}}));"
+            f"el.dispatchEvent(new Event('change',{{bubbles:true}}));"
+            f"}})()"
+        )
+        rows += (
+            f'<div style="display:grid;grid-template-columns:1fr 110px 90px 90px 80px;'
+            f'gap:8px;padding:10px 12px;border-bottom:1px solid {C_BORDER};align-items:center;">'
+            f'<div style="font-size:14px;{strike}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{text}</div>'
+            f'<div style="font-size:13px;color:{C_MUTED};">{due}</div>'
+            f'<div>{src_badge}</div><div>{status_badge}</div>'
+            f'<div><button onclick="{del_js}" style="background:{C_RED};color:#fff;border:none;'
+            f'border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;">'
+            f'Delete</button></div></div>'
+        )
+    return (
+        f'<div style="background:{C_CARD};border:1px solid {C_BORDER};'
+        f'border-radius:12px;overflow:hidden;font-family:Inter,sans-serif;">{header}{rows}</div>'
+    )
+
+
 # ── Gradio tab builder ────────────────────────────────────────────────────────
 
 def build_operating_tab(ctx: AppContext) -> dict:
@@ -491,8 +558,45 @@ def build_operating_tab(ctx: AppContext) -> dict:
                 )
 
 
+        # ── Database section ──────────────────────────────────────────────────
         gr.HTML(
-            f'<div style="font-family:Inter,sans-serif;padding:12px 32px;'
+            f'<div style="font-family:Inter,sans-serif;padding:16px 0 0;'
+            f'border-top:1px solid {C_BORDER};margin-top:8px;">'
+            f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
+            f'color:{C_CYAN};padding:16px 0 12px;">Database</div></div>',
+            sanitize_html=False,
+        )
+
+        with gr.Row():
+            with gr.Column(scale=2):
+                db_table_html  = gr.HTML(_render_db_table(tasks_init), sanitize_html=False)
+                db_tasks_state = gr.State(tasks_init)
+                delete_input   = gr.Textbox(value="", visible=True, elem_id="sm-db-delete", label="", container=False)
+                db_timer       = gr.Timer(value=5)
+                refresh_btn    = gr.Button("↻ Refresh", variant="secondary", size="sm")
+
+            with gr.Column(scale=1):
+                gr.HTML(
+                    f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
+                    f'color:{C_CYAN};padding:0 0 12px;font-family:Inter,sans-serif;">Add Task</div>',
+                    sanitize_html=False,
+                )
+                new_text   = gr.Textbox(label="Task description", placeholder="e.g. Buy groceries")
+                new_due    = gr.Textbox(label="Due date (YYYY-MM-DD)", value=date.today().isoformat())
+                add_btn    = gr.Button("+ Add Task", variant="primary", size="sm")
+                add_status = gr.HTML("", sanitize_html=False)
+                gr.HTML(
+                    f'<div style="margin-top:16px;padding:14px;background:{C_CARD};'
+                    f'border:1px solid {C_BORDER};border-radius:10px;">'
+                    f'<div style="font-size:12px;color:{C_MUTED};line-height:1.7;">'
+                    f'Changes in <strong style="color:{C_CYAN};">Adminer</strong> (port 8080) '
+                    f'appear here within 5 s. Changes here are instantly visible in Adminer.'
+                    f'</div></div>',
+                    sanitize_html=False,
+                )
+
+        gr.HTML(
+            f'<div style="font-family:Inter,sans-serif;padding:12px 0;'
             f'border-top:1px solid {C_BORDER};text-align:right;'
             f'font-size:12px;color:{C_GREEN};">All systems operational</div>',
             sanitize_html=False,
@@ -511,6 +615,16 @@ def build_operating_tab(ctx: AppContext) -> dict:
         "link_person":      link_person,
         "link_btn":         link_btn,
         "link_status":      link_status,
+        # database
+        "db_table_html":    db_table_html,
+        "db_tasks_state":   db_tasks_state,
+        "delete_input":     delete_input,
+        "db_timer":         db_timer,
+        "refresh_btn":      refresh_btn,
+        "new_text":         new_text,
+        "new_due":          new_due,
+        "add_btn":          add_btn,
+        "add_status":       add_status,
     }
 
 
@@ -598,5 +712,89 @@ def wire_operating_callbacks(comps: dict, ctx: AppContext) -> None:
         fn=_link_calendar,
         inputs=[comps["link_person"]],
         outputs=[comps["link_status"], comps["sync_status"]],
+        show_progress="hidden",
+    )
+
+    # ── Database callbacks ────────────────────────────────────────────────────
+
+    def _db_refresh():
+        tasks = load_tasks(ctx.base_dir)
+        return tasks, _render_db_table(tasks)
+
+    comps["db_timer"].tick(
+        fn=_db_refresh,
+        outputs=[comps["db_tasks_state"], comps["db_table_html"]],
+        show_progress="hidden",
+    )
+
+    comps["refresh_btn"].click(
+        fn=_db_refresh,
+        outputs=[comps["db_tasks_state"], comps["db_table_html"]],
+        show_progress="hidden",
+    )
+
+    def _add_task(text: str, due: str, tasks: list[dict], mode: str):
+        text = text.strip()
+        if not text:
+            return (
+                tasks, _render_db_table(tasks), tasks, render_task_list(tasks, mode),
+                f'<div style="color:{C_RED};font-size:13px;padding:4px 0;">Task text required.</div>',
+                gr.update(),
+            )
+        try:
+            date.fromisoformat(due.strip())
+        except ValueError:
+            return (
+                tasks, _render_db_table(tasks), tasks, render_task_list(tasks, mode),
+                f'<div style="color:{C_RED};font-size:13px;padding:4px 0;">Invalid date. Use YYYY-MM-DD.</div>',
+                gr.update(),
+            )
+        new_task = {
+            "id": str(uuid.uuid4())[:8],
+            "text": text,
+            "due": due.strip(),
+            "completed": False,
+            "source": "user",
+            "gcal_event_id": "",
+            "created_at": datetime.now().isoformat(),
+        }
+        db.save_task(new_task)
+        all_tasks = load_tasks(ctx.base_dir)
+        return (
+            all_tasks, _render_db_table(all_tasks),
+            all_tasks, render_task_list(all_tasks, mode),
+            f'<div style="color:{C_GREEN};font-size:13px;padding:4px 0;">Task added.</div>',
+            "",
+        )
+
+    comps["add_btn"].click(
+        fn=_add_task,
+        inputs=[comps["new_text"], comps["new_due"], comps["db_tasks_state"], comps["filter_state"]],
+        outputs=[
+            comps["db_tasks_state"], comps["db_table_html"],
+            comps["tasks_state"], comps["task_list_html"],
+            comps["add_status"], comps["new_text"],
+        ],
+        show_progress="hidden",
+    )
+
+    def _delete_task(task_id: str, tasks: list[dict], mode: str):
+        if not task_id:
+            return tasks, _render_db_table(tasks), tasks, render_task_list(tasks, mode), ""
+        try:
+            db.delete_task(task_id)
+        except Exception as exc:
+            print(f"[DB tab] delete failed: {exc}")
+        all_tasks = load_tasks(ctx.base_dir)
+        return all_tasks, _render_db_table(all_tasks), all_tasks, render_task_list(all_tasks, mode), ""
+
+    comps["delete_input"].change(
+        fn=_delete_task,
+        inputs=[comps["delete_input"], comps["db_tasks_state"], comps["filter_state"]],
+        outputs=[
+            comps["db_tasks_state"], comps["db_table_html"],
+            comps["tasks_state"], comps["task_list_html"],
+            comps["delete_input"],
+        ],
         show_progress="hidden",
     )

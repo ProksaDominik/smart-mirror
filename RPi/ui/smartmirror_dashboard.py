@@ -214,8 +214,8 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
         wire_operating_callbacks(operating_comps, ctx)
 
         def _on_load():
+            reset_scan_state()  # Always first — must not be delayed by anything below
             from ui.sm_about import _calendar_token_exists, _model_exists, render_about
-            reset_scan_state()
             return render_about(
                 cam_ok=True,
                 model_ok=_model_exists(),

@@ -226,6 +226,14 @@ def _speak_edge(text: str) -> None:
     tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
     tmp.close()
     asyncio.run(_edge_synthesize(text, tmp.name))
+    # Prepend silence so the audio pipeline is active before the first word plays
+    try:
+        from pydub import AudioSegment
+        audio = AudioSegment.from_mp3(tmp.name)
+        padded = AudioSegment.silent(duration=300) + audio
+        padded.export(tmp.name, format="mp3")
+    except Exception:
+        pass
     _play_voice_file(tmp.name)
 
 

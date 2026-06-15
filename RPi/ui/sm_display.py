@@ -51,9 +51,13 @@ def _get_model():
         if _yolo_model is None:
             try:
                 from ultralytics import YOLO
+                print(f"[YOLO] Loading model from {_MODEL_PATH}...")
                 _yolo_model = YOLO(str(_MODEL_PATH))
+                print(f"[YOLO] Model loaded successfully")
             except Exception as e:
-                print(f"[YOLO] Could not load model from {_MODEL_PATH}: {e}")
+                print(f"[YOLO] ERROR: Could not load model from {_MODEL_PATH}: {e}")
+                import traceback
+                traceback.print_exc()
     return _yolo_model
 
 
@@ -327,11 +331,11 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 # ── Recognition tuning ───────────────────────────────────────────────────────
 _DRAW_CONF      = 0.30   # min conf to draw a box at all
 _GREET_CONF     = 0.30   # min conf for a frame to count as any vote (known or unknown)
-_ID_CONF        = 0.70   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
+_ID_CONF        = 0.85   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__" (TIGHTENED from 0.70)
 _MIN_FACE_FRAC  = 0.05   # face narrower than 5 % of frame → "come closer"
 _ZOOM_FACE_FRAC = 0.20   # face narrower than 20 % of frame → re-run on zoomed crop
 _VOTE_WINDOW    = 10     # how many recent frames we remember
-_VOTE_MIN       = 4      # same name must win this many votes to be greeted
+_VOTE_MIN       = 7      # same name must win this many votes to be greeted (TIGHTENED from 4 to 7/10)
 _NAME_HOLD_SEC  = 10.0   # keep the greeting up this long after confirmation
 
 _votes: deque = deque(maxlen=_VOTE_WINDOW)
@@ -343,14 +347,18 @@ _scan_state: dict = {"done": False, "initialized": False}
 
 
 def reset_scan_state() -> None:
-    """Called on every page load to wipe YOLO state for the new session."""
+    """Called on every page load to wipe recognition state (but keep model in memory for speed)."""
     global _current_user, _confirmed_name, _confirmed_at
+    
+    # Only clear voting and confirmation state — do NOT unload the model
+    # Keeping the model in memory prevents slow reload on page refresh
     _votes.clear()
     _confirmed_name = None
     _confirmed_at = 0.0
     _current_user = ""
     _scan_state["done"] = False
     _scan_state["initialized"] = False
+    print("[YOLO] Recognition state reset (model kept in memory for speed)")
 
 
 def _largest_box(result):
@@ -373,16 +381,26 @@ def _predict_frame(
 
     model = _get_model()
     if model is None:
-        return img, "Model not loaded"
+        return img, "Model loading..."
 
     img_np  = np.array(img.convert("RGB"))
     img_bgr = np.ascontiguousarray(img_np[..., ::-1])
     H, W    = img_bgr.shape[:2]
 
-    result = model.predict(
-        source=img_bgr, conf=_DRAW_CONF, iou=iou_threshold,
-        imgsz=640, verbose=False,
-    )[0]
+    try:
+        result = model.predict(
+            source=img_bgr, conf=_DRAW_CONF, iou=iou_threshold,
+            imgsz=640, verbose=False,
+        )[0]
+    except Exception as e:
+        print(f"[YOLO] Prediction error: {e}")
+        # Reset model on error and try again next frame
+        import traceback
+        traceback.print_exc()
+        global _yolo_model
+        _yolo_model = None
+        return img, "Model error - reinitializing..."
+    
     box = _largest_box(result)
     print(f"[YOLO] boxes={len(result.boxes) if result.boxes else 0} best={f'{box[4]} {box[5]:.2f}' if box else 'none'}")
 
@@ -572,7 +590,7 @@ def _welcome_audio(name: str) -> None:
         _voice.speak(f"{_time_period()} sir!")
 
         # Wait briefly for the calendar sync to finish and populate the DB
-        time.sleep(2)
+        time.sleep(0.5)
 
         # Read today's tasks
         try:
@@ -663,39 +681,50 @@ def _welcome_audio(name: str) -> None:
         print(f"[Welcome audio] {exc}")
 
 
+def _unknown_audio() -> None:
+    """Speak a short message when an unregistered face is detected. Runs in a daemon thread."""
+    from ui import music as _music
+    try:
+        from ui import voice as _voice
+        try:
+            _voice.speak("I don't recognise you. Please register your face to use the mirror.")
+        finally:
+            _music.stop()
+    except Exception as exc:
+        _music.stop()
+        print(f"[Unknown audio] {exc}")
+
+
 def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None = None) -> None:
     _PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
 
     _NOOP = (gr.update(), gr.update())
 
-    def _process_frame(img):
-        global _current_user, _confirmed_name, _confirmed_at
+    def _process_frame(img, session_user):
+        global _current_user
 
-        if _scan_state["done"]:
+        print(f"[FRAME] session_user={session_user!r} img={'YES' if img is not None else 'None'}")
+
+        # session_user is gr.State("") — resets to "" on every page refresh.
+        # Once a face is confirmed, it holds the name and stops scanning.
+        # Old-session in-flight frames carry the old confirmed name → NOOP.
+        if session_user:
             return _NOOP
-
-        if not _scan_state["initialized"]:
-            # First frame after a page refresh — wipe voting state from previous scan
-            _votes.clear()
-            _confirmed_name = None
-            _confirmed_at = 0.0
-            _current_user = ""
-            _scan_state["initialized"] = True
 
         if img is None:
             return _greeting_html("Looking for a face…"), gr.update()
 
         _, summary = _predict_frame(img)
+        print(f"[FRAME] summary={summary!r}")
 
         if summary == "Unregistered face recognized":
-            _scan_state["done"] = True
+            threading.Thread(target=_unknown_audio, daemon=True).start()
             return _unregistered_html(), "__unknown__"
 
         for prefix in _PERIODS:
             if summary.startswith(prefix):
                 name = summary[len(prefix):]
                 _current_user = name
-                _scan_state["done"] = True
                 threading.Thread(target=_welcome_audio, args=(name,), daemon=True).start()
                 return _recognised_html(name), name
 
@@ -703,7 +732,7 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
 
     comps["webcam"].stream(
         fn=_process_frame,
-        inputs=[comps["webcam"]],
+        inputs=[comps["webcam"], comps["current_user_state"]],
         outputs=[comps["greeting_html"], comps["current_user_state"]],
         stream_every=1.0,
         show_progress="hidden",

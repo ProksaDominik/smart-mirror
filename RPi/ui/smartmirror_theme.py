@@ -25,6 +25,7 @@ body,
     background: #0A0A0F !important;
     color: #ffffff !important;
     font-family: 'Inter', sans-serif !important;
+    font-size: 15px !important;
 }
 
 .gradio-container {
@@ -47,11 +48,11 @@ footer { display: none !important; }
 .tab-nav button {
     color: #8B8BA8 !important;
     font-family: 'Inter', sans-serif !important;
-    font-size: 11px !important;
+    font-size: 13px !important;
     font-weight: 500 !important;
-    letter-spacing: 0.1em !important;
+    letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
-    padding: 14px 20px !important;
+    padding: 16px 24px !important;
     border: none !important;
     background: transparent !important;
     border-bottom: 2px solid transparent !important;
@@ -123,6 +124,9 @@ textarea:focus {
     border-color: transparent !important;
 }
 .block.generating { border: none !important; box-shadow: none !important; }
+
+/* ── Hide Gradio status/progress overlay (the "Waiting" / "Processing" pill) */
+.wrap.svelte-1uj8rng { display: none !important; }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }

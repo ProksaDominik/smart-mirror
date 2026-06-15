@@ -13,7 +13,7 @@ def main() -> None:
     demo = build_smartmirror_dashboard(ctx)
 
     # Kiosk display app — pure mirror view, no tabs, port 8501
-    start_kiosk_thread(port=8501)
+    start_kiosk_thread(port=8501, base_dir=ctx.base_dir)
 
     try:
         launch_smartmirror_dashboard(ctx, demo)

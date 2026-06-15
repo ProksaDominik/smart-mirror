@@ -16,8 +16,10 @@ from ui.context import AppContext
 from ui.sm_about import build_about_tab, wire_about_callbacks
 from ui.sm_display import (
     _render_left,
+    _render_display_tasks,
     build_display_tab,
     fetch_weather,
+    reset_scan_state,
     wire_display_callbacks,
 )
 from ui.sm_display_simple import (
@@ -47,34 +49,79 @@ _SM_THEME = gr.themes.Base(
 
 _WEBCAM_JS = """
 () => {
-    function smHandleWebcamButtons() {
-        var vid = document.querySelector('video');
-        if (!vid) return;
-        // Walk up from the <video> until we find a container that has buttons
-        var el = vid.parentElement;
-        for (var depth = 0; el && el.tagName !== 'BODY' && depth < 8; depth++) {
-            var btns = el.querySelectorAll('button');
-            if (btns.length) {
-                btns.forEach(function(btn) {
-                    // Click the first non-hidden button to start the stream
-                    if (btn.offsetParent !== null) btn.click();
-                    // Then hide it so it never shows
-                    btn.style.setProperty('display', 'none', 'important');
-                    btn.style.setProperty('visibility', 'hidden', 'important');
-                    btn.style.setProperty('pointer-events', 'none', 'important');
-                });
-                return;
+    // Phase 0: need to click "Click to Access Webcam"
+    // Phase 1: webcam clicked, waiting for recording button
+    // Phase 2: streaming active
+    var _smPhase = 0;
+    var _smObs = null;
+
+    function smClickAccessWebcam() {
+        var btns = document.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if (b.offsetParent !== null && b.textContent &&
+                    b.textContent.toLowerCase().indexOf('access webcam') !== -1) {
+                b.click();
+                _smPhase = 1;
+                return true;
             }
-            el = el.parentElement;
+        }
+        return false;
+    }
+
+    function smClickRecord() {
+        // In Gradio 6, the streaming button has an inner element with title="start recording"
+        var recEl = document.querySelector('[title="start recording"]');
+        if (recEl && recEl.offsetParent !== null) {
+            // Walk up to the parent <button>
+            var el = recEl;
+            while (el && el.tagName !== 'BUTTON' && el.tagName !== 'BODY') {
+                el = el.parentElement;
+            }
+            if (el && el.tagName === 'BUTTON') {
+                el.click();
+                _smPhase = 2;
+                if (_smObs) { _smObs.disconnect(); _smObs = null; }
+                return true;
+            }
+        }
+        // Fallback: aria-label="capture photo" is the same button in image mode
+        var capBtn = document.querySelector('button[aria-label="capture photo"]');
+        if (capBtn && capBtn.offsetParent !== null) {
+            capBtn.click();
+            _smPhase = 2;
+            if (_smObs) { _smObs.disconnect(); _smObs = null; }
+            return true;
+        }
+        return false;
+    }
+
+    function smStep() {
+        if (_smPhase === 2) return;
+        if (_smPhase < 1) {
+            // If video is already visible the user already clicked access webcam
+            if (document.querySelector('video')) {
+                _smPhase = 1;
+            } else {
+                smClickAccessWebcam();
+            }
+        }
+        if (_smPhase >= 1) {
+            smClickRecord();
         }
     }
-    // Run immediately and on retries in case the component mounts late
-    setTimeout(smHandleWebcamButtons, 200);
-    setTimeout(smHandleWebcamButtons, 700);
-    setTimeout(smHandleWebcamButtons, 1500);
-    // MutationObserver catches any button that appears after initial load
-    new MutationObserver(smHandleWebcamButtons)
-        .observe(document.body, {childList: true, subtree: true});
+
+    // Retry schedule — covers both "user hasn't clicked yet" and
+    // "user already clicked but recording button appeared after our JS ran"
+    setTimeout(smStep, 400);
+    setTimeout(smStep, 1000);
+    setTimeout(smStep, 2000);
+    setTimeout(smStep, 3500);
+    setTimeout(smStep, 6000);
+
+    // MutationObserver for dynamic DOM changes (webcam permission, button swap)
+    _smObs = new MutationObserver(smStep);
+    _smObs.observe(document.body, {childList: true, subtree: true});
 }
 """
 
@@ -161,17 +208,14 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             about_comps     = build_about_tab(ctx)
             operating_comps = build_operating_tab(ctx)
 
-        wire_display_callbacks(display_comps, ctx)
+        wire_display_callbacks(display_comps, ctx, op_comps=operating_comps)
         wire_display_simple_callbacks(mirror_comps, ctx)
         wire_about_callbacks(about_comps, ctx)
         wire_operating_callbacks(operating_comps, ctx)
 
         def _on_load():
-            from ui.sm_about import (
-                _calendar_token_exists,
-                _model_exists,
-                render_about,
-            )
+            from ui.sm_about import _calendar_token_exists, _model_exists, render_about
+            reset_scan_state()
             return render_about(
                 cam_ok=True,
                 model_ok=_model_exists(),
@@ -189,25 +233,37 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
         demo.load(fn=None, js=_WEBCAM_JS)
         demo.load(fn=None, js=_KIOSK_JS)
 
-        # When a face is confirmed → sync that person's calendar into all panels
-        def _on_user_confirmed(name, tasks, mode):
+        # When a face is confirmed → sync calendar and update all panels including Mirror tab
+        def _on_user_confirmed(name, tasks, mode, mirror_w):
+            print(f"[SYNC] _on_user_confirmed called with name={name!r}")
             if not name or name == "__unknown__":
-                return gr.update(), gr.update(), gr.update(), gr.update()
+                return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
             from ui.sm_operating import (
                 try_google_calendar_sync,
                 events_to_cal_tasks,
                 render_task_list,
             )
+            from ui.sm_display import _render_display_tasks
             import db
-            events, _ = try_google_calendar_sync(ctx.base_dir, name)
+            print(f"[SYNC] syncing calendar for {name!r} from {ctx.base_dir}")
+            events, msg = try_google_calendar_sync(ctx.base_dir, name)
+            print(f"[SYNC] got {len(events)} events, msg={msg!r}")
             cal_tasks = events_to_cal_tasks(events)
             try:
                 db.replace_calendar_tasks(cal_tasks)
             except Exception as exc:
                 print(f"[DB] face-sync failed: {exc}")
-            user_tasks = [t for t in tasks if t.get("source") != "calendar"]
-            new_tasks  = user_tasks + cal_tasks
-            return events, _render_left(events), new_tasks, render_task_list(new_tasks, mode)
+            mirror = render_mirror(mirror_w, events, name, cal_tasks)
+            return (
+                events,
+                _render_left(events),
+                _render_display_tasks(cal_tasks),
+                cal_tasks,
+                render_task_list(cal_tasks, mode),
+                mirror,
+                name,
+                cal_tasks,
+            )
 
         display_comps["current_user_state"].change(
             fn=_on_user_confirmed,
@@ -215,12 +271,17 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
                 display_comps["current_user_state"],
                 operating_comps["tasks_state"],
                 operating_comps["filter_state"],
+                mirror_comps["weather_state"],
             ],
             outputs=[
                 display_comps["events_state"],
                 display_comps["left_html"],
+                display_comps["tasks_html"],
                 operating_comps["tasks_state"],
                 operating_comps["task_list_html"],
+                mirror_comps["mirror_html"],
+                mirror_comps["name_state"],
+                mirror_comps["tasks_state"],
             ],
             show_progress="hidden",
         )
@@ -233,8 +294,9 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             show_progress="hidden",
         )
         operating_comps["events_state"].change(
-            fn=lambda ev, w: render_mirror(w, ev),
-            inputs=[operating_comps["events_state"], mirror_comps["weather_state"]],
+            fn=lambda ev, w, name, tasks: render_mirror(w, ev, name, tasks),
+            inputs=[operating_comps["events_state"], mirror_comps["weather_state"],
+                    mirror_comps["name_state"], mirror_comps["tasks_state"]],
             outputs=[mirror_comps["mirror_html"]],
             show_progress="hidden",
         )

@@ -9,3 +9,7 @@ rpi-lgpio
 smbus2
 ultralytics
 opencv-python-headless
+pygame
+edge-tts
+sounddevice
+scipy

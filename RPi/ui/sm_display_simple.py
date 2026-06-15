@@ -30,9 +30,29 @@ from ui.smartmirror_theme import (
 )
 
 
-def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
+def render_mirror(
+    weather_data: dict | None,
+    events: list[dict],
+    name: str = "",
+    tasks: list[dict] | None = None,
+) -> str:
+    from datetime import date as _date
     w = _parse_weather(weather_data)
     M = "#C8C8DC"  # brighter muted for LCD visibility
+
+    # Greeting section
+    if name and name != "__unknown__":
+        from ui.sm_display import _time_period
+        greeting_html = (
+            f'<div style="margin-bottom:6px;">'
+            f'<div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;'
+            f'color:{C_CYAN};margin-bottom:4px;">Welcome</div>'
+            f'<div style="font-size:28px;font-weight:300;color:#fff;">'
+            f'{_time_period()}, {name}</div>'
+            f'</div>'
+        )
+    else:
+        greeting_html = ""
 
     events_html = ""
     for ev in events[:3]:
@@ -48,6 +68,34 @@ def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
             f'<span style="font-size:16px;color:{color};line-height:1.3;font-weight:300;">{title}</span>'
             f'</div>'
         )
+
+    # Tasks section (to-do list from calendar)
+    tasks_html = ""
+    if tasks:
+        today = _date.today().isoformat()
+        rows = ""
+        for t in tasks:
+            if t.get("completed"):
+                continue
+            title = t.get("title", t.get("text", ""))
+            due   = t.get("due", "")
+            color = C_CYAN if due == today else M
+            rows += (
+                f'<div style="display:flex;align-items:baseline;gap:10px;'
+                f'margin-bottom:10px;padding-left:14px;">'
+                f'<span style="font-size:13px;color:{color};font-weight:300;">·</span>'
+                f'<span style="font-size:14px;color:{M};line-height:1.3;font-weight:300;">{title}</span>'
+                f'</div>'
+            )
+        if rows:
+            tasks_html = (
+                f'<div style="margin-top:16px;">'
+                f'<div style="font-size:10px;letter-spacing:.2em;text-transform:uppercase;'
+                f'color:{C_CYAN};margin-bottom:10px;'
+                f'border-bottom:1px solid rgba(0,245,255,0.2);padding-bottom:6px;">To-Do</div>'
+                f'{rows}'
+                f'</div>'
+            )
 
     forecast_html = ""
     for fc in w["forecast"]:
@@ -73,6 +121,9 @@ def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
     overflow:hidden;
 ">
 
+  <!-- Greeting (only when a face is recognised) -->
+  {f'<div style="flex:0 0 auto;padding-bottom:16px;">{greeting_html}</div>' if greeting_html else ''}
+
   <!-- Clock — flex:2 -->
   <div style="flex:2;display:flex;flex-direction:column;justify-content:center;min-height:0;">
     <div style="display:flex;align-items:flex-end;gap:16px;">
@@ -91,18 +142,19 @@ def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
     </div>
   </div>
 
-  <!-- Today's Schedule — flex:1 -->
-  <div style="flex:1;min-height:0;overflow:hidden;">
+  <!-- Today's Schedule — flex:3 -->
+  <div style="flex:3;min-height:0;overflow:visible;">
     <div style="font-size:10px;letter-spacing:.2em;text-transform:uppercase;
                 color:{C_CYAN};margin-bottom:12px;
                 border-bottom:1px solid rgba(0,245,255,0.2);padding-bottom:6px;">
       Today's Schedule
     </div>
     {events_html or f'<div style="color:{M};font-size:15px;font-weight:300;">No events today.</div>'}
+    {tasks_html}
   </div>
 
-  <!-- Mirror area — flex:5 (dominant section, the physical glass) -->
-  <div style="flex:5;min-height:0;"></div>
+  <!-- Mirror area — flex:3 (dominant section, the physical glass) -->
+  <div style="flex:3;min-height:0;"></div>
 
   <!-- Weather — flex:2 -->
   <div style="flex:2;min-height:0;display:flex;flex-direction:column;justify-content:center;">
@@ -144,27 +196,59 @@ def render_mirror(weather_data: dict | None, events: list[dict]) -> str:
 
 def build_display_simple_tab(ctx: AppContext, initial_weather=None) -> dict:
     with gr.TabItem("Mirror", id="mirror", render_children=False):
-        mirror_html   = gr.HTML(render_mirror(initial_weather, SAMPLE_EVENTS), sanitize_html=False)
+        mirror_html   = gr.HTML(render_mirror(initial_weather, []), sanitize_html=False)
         weather_state = gr.State(initial_weather)
-        events_state  = gr.State(list(SAMPLE_EVENTS))
+        events_state  = gr.State([])
+        name_state    = gr.State("")
+        tasks_state   = gr.State([])
         weather_timer = gr.Timer(value=300.0, active=True)
+        sync_timer    = gr.Timer(value=2.0, active=True)
 
     return {
         "mirror_html":   mirror_html,
         "weather_state": weather_state,
         "events_state":  events_state,
+        "name_state":    name_state,
+        "tasks_state":   tasks_state,
         "weather_timer": weather_timer,
+        "sync_timer":    sync_timer,
     }
 
 
 def wire_display_simple_callbacks(comps: dict, ctx: AppContext) -> None:
-    def _weather_tick(w, ev):
+    def _weather_tick(w, ev, name, tasks):
         new_w = fetch_weather()
-        return render_mirror(new_w, ev), new_w
+        return render_mirror(new_w, ev, name, tasks), new_w
 
     comps["weather_timer"].tick(
         fn=_weather_tick,
-        inputs=[comps["weather_state"], comps["events_state"]],
+        inputs=[comps["weather_state"], comps["events_state"], comps["name_state"], comps["tasks_state"]],
         outputs=[comps["mirror_html"], comps["weather_state"]],
+        show_progress="hidden",
+    )
+
+    def _sync_tick(last_name, ev, tasks, w):
+        import ui.sm_display as _disp
+        name = _disp._current_user
+        new_w = fetch_weather()
+
+        if not name or name == last_name:
+            return gr.update(), gr.update(), gr.update(), last_name
+
+        try:
+            from ui.sm_operating import try_google_calendar_sync, events_to_cal_tasks
+            new_ev, msg = try_google_calendar_sync(ctx.base_dir, name)
+            print(f"[MIRROR] {name}: {len(new_ev)} events — {msg}")
+            new_tasks = events_to_cal_tasks(new_ev)
+        except Exception as exc:
+            print(f"[MIRROR] sync failed: {exc}")
+            new_ev, new_tasks = ev, tasks
+
+        return render_mirror(new_w, new_ev, name, new_tasks), new_ev, new_tasks, name
+
+    comps["sync_timer"].tick(
+        fn=_sync_tick,
+        inputs=[comps["name_state"], comps["events_state"], comps["tasks_state"], comps["weather_state"]],
+        outputs=[comps["mirror_html"], comps["events_state"], comps["tasks_state"], comps["name_state"]],
         show_progress="hidden",
     )

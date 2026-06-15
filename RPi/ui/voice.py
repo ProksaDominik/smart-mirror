@@ -4,12 +4,23 @@ import tempfile
 import threading
 import queue
 
+# PipeWire manages audio on this Pi — tell SDL to route through PulseAudio
+os.environ.setdefault("SDL_AUDIODRIVER", "pulse")
+
 import numpy as np
-import sounddevice as sd
-from scipy.io.wavfile import write as write_wav
 import pygame
 import edge_tts
 import requests
+
+try:
+    import sounddevice as sd
+    from scipy.io.wavfile import write as write_wav
+    _AUDIO_INPUT_AVAILABLE = True
+except OSError:
+    sd = None  # type: ignore
+    write_wav = None  # type: ignore
+    _AUDIO_INPUT_AVAILABLE = False
+    print("[voice] PortAudio not found — microphone recording disabled, TTS playback still works")
 
 from ui import music
 
@@ -18,7 +29,7 @@ CHANNELS = 1
 
 EDGE_VOICE = "en-GB-ThomasNeural"
 EDGE_PITCH = "+0Hz"
-EDGE_RATE = "-3%"
+EDGE_RATE = "+12%"
 
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "").strip()
@@ -47,6 +58,8 @@ class Recorder:
     """Push-button microphone recorder. Call start() then stop() to get a WAV path."""
 
     def __init__(self) -> None:
+        if not _AUDIO_INPUT_AVAILABLE:
+            raise RuntimeError("PortAudio not available — install libportaudio2")
         self._chunks: list[np.ndarray] = []
         self._queue: "queue.Queue[np.ndarray]" = queue.Queue()
         self._stream: sd.InputStream | None = None
@@ -257,7 +270,7 @@ def _speak_elevenlabs(text: str) -> bool:
 
 
 def speak(text: str) -> None:
-    """Speak text aloud. Background music starts on first call and plays for a few seconds."""
+    """Speak text aloud. Background music starts on first call."""
     music.play_under()
     if not _speak_elevenlabs(text):
         _speak_edge(text)

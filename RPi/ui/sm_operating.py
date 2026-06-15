@@ -73,7 +73,7 @@ _KNOWN_PEOPLE = ["Dominik", "JP", "Joao", "Liviu", "Lloyd", "Michal", "Radu"]
 _last_sync_time: str = "never"
 _sync_event_count: int = 0
 
-_GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+_GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 
 
 def _token_path(base_dir: Path, name: str | None) -> Path:
@@ -109,7 +109,7 @@ def link_google_calendar(base_dir: Path, name: str) -> str:
 def try_google_calendar_sync(base_dir: Path, name: str | None = None) -> tuple[list[dict], str]:
     cp = _creds_path(base_dir)
     if cp is None:
-        return SAMPLE_EVENTS, "credentials.json not found — using sample events."
+        return [],"credentials.json not found — using sample events."
     tp = _token_path(base_dir, name)
     try:
         from google.oauth2.credentials import Credentials
@@ -125,7 +125,7 @@ def try_google_calendar_sync(base_dir: Path, name: str | None = None) -> tuple[l
                 tp.write_text(creds.to_json())
             else:
                 who = name or "this account"
-                return SAMPLE_EVENTS, f"No calendar linked for {who}. Use 'Link Calendar' below."
+                return [],f"No calendar linked for {who}. Use 'Link Calendar' below."
 
         service = gapi_build("calendar", "v3", credentials=creds)
         today_start = datetime.combine(date.today(), datetime.min.time()).isoformat() + "Z"
@@ -156,9 +156,9 @@ def try_google_calendar_sync(base_dir: Path, name: str | None = None) -> tuple[l
         who = name or "calendar"
         return events, f"Synced {len(events)} events for {who}."
     except ImportError:
-        return SAMPLE_EVENTS, "google-api-python-client not installed."
+        return [],"google-api-python-client not installed."
     except Exception as exc:
-        return SAMPLE_EVENTS, f"Sync failed: {exc}"
+        return [],f"Sync failed: {exc}"
 
 
 def delete_google_calendar_event(base_dir: Path, name: str | None, event_id: str) -> None:
@@ -259,7 +259,7 @@ def _render_task_row(task: dict, is_today: bool = True) -> str:
         text_html = (
             f'<div style="flex:1;">'
             f'{date_label}'
-            f'<div style="font-size:14px;color:{C_WHITE};{strike}">{text}</div>'
+            f'<div style="font-size:15px;color:{C_WHITE};{strike}">{text}</div>'
             f'</div>'
         )
 
@@ -354,7 +354,7 @@ def render_events_panel(events: list[dict]) -> str:
 
 def events_to_cal_tasks(events: list[dict]) -> list[dict]:
     """Convert Google Calendar event dicts to task dicts."""
-    now_str = datetime.now().strftime("%H:%M:%S")
+    now_str = datetime.now().isoformat()
     today   = _today_iso()
     tasks   = []
     for ev in events:
@@ -397,19 +397,13 @@ def _cal_card(last_sync: str, event_count: int, cal_ok: bool) -> str:
 # ── Gradio tab builder ────────────────────────────────────────────────────────
 
 def build_operating_tab(ctx: AppContext) -> dict:
-    # Sync calendar immediately so the page opens with fresh data
-    _init_events, _init_msg = try_google_calendar_sync(ctx.base_dir, None)
-    cal_ok_init = (
-        "failed" not in _init_msg.lower()
-        and "not found" not in _init_msg.lower()
-        and "no calendar" not in _init_msg.lower()
-    )
-    _init_cal_tasks = events_to_cal_tasks(_init_events)
+    # Calendar syncs on face scan only — clear any stale calendar tasks from DB
+    cal_ok_init = False
     try:
-        db.replace_calendar_tasks(_init_cal_tasks)
+        db.replace_calendar_tasks([])
     except Exception as exc:
-        print(f"[DB] startup sync failed: {exc}")
-    tasks_init = load_tasks(ctx.base_dir)  # includes fresh calendar tasks
+        print(f"[DB] startup clear failed: {exc}")
+    tasks_init = load_tasks(ctx.base_dir)
 
     with gr.TabItem("Operating", id="operating"):
 
@@ -439,39 +433,23 @@ def build_operating_tab(ctx: AppContext) -> dict:
             # LEFT: to-do list + today's events
             with gr.Column(scale=1):
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
                     f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
                     f'Schedule &amp; Tasks</div>',
                     sanitize_html=False,
                 )
                 filter_state = gr.State("Today")
-                filter_radio = gr.Radio(
-                    choices=["Today", "Completed"],
-                    value="Today",
-                    label="",
-                    container=False,
-                    elem_id="sm-filter-radio",
-                )
-                filter_html  = gr.HTML(_render_filter_tabs("Today"), sanitize_html=False)
-                with gr.Row():
-                    task_input = gr.Textbox(
-                        placeholder="+ Add a new task for today...",
-                        label="",
-                        container=False,
-                        scale=5,
-                    )
-                    add_btn = gr.Button("+", size="sm", scale=1, variant="primary")
 
                 tasks_state    = gr.State(tasks_init)
                 task_action    = gr.Textbox(value="", visible=True, elem_id="sm-task-action", label="", container=False)
                 task_list_html = gr.HTML(render_task_list(tasks_init, "Today"), sanitize_html=False)
 
-                events_state = gr.State(list(SAMPLE_EVENTS))
+                events_state = gr.State([])
 
             # RIGHT: calendar sync + mirror settings
             with gr.Column(scale=1):
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
                     f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
                     f'Calendar Sync</div>',
                     sanitize_html=False,
@@ -492,7 +470,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
                     sync_btn = gr.Button("↻ Sync Now", variant="primary", size="sm")
 
                 gr.HTML(
-                    f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+                    f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
                     f'color:{C_CYAN};padding:20px 0 10px;font-family:Inter,sans-serif;">'
                     f'Link a Google Calendar</div>'
                     f'<div style="font-size:13px;color:{C_MUTED};margin-bottom:12px;">'
@@ -522,10 +500,6 @@ def build_operating_tab(ctx: AppContext) -> dict:
 
     return {
         "filter_state":     filter_state,
-        "filter_radio":     filter_radio,
-        "filter_html":      filter_html,
-        "task_input":       task_input,
-        "add_btn":          add_btn,
         "tasks_state":      tasks_state,
         "task_action":      task_action,
         "task_list_html":   task_list_html,
@@ -543,31 +517,6 @@ def build_operating_tab(ctx: AppContext) -> dict:
 # ── Callbacks ─────────────────────────────────────────────────────────────────
 
 def wire_operating_callbacks(comps: dict, ctx: AppContext) -> None:
-
-    def _add_task(text: str, tasks: list[dict], mode: str):
-        if not text.strip():
-            return tasks, render_task_list(tasks, mode), ""
-        tasks = list(tasks) + [_new_task(text)]
-        save_tasks(ctx.base_dir, tasks)
-        return tasks, render_task_list(tasks, mode), ""
-
-    for evt in (comps["add_btn"].click, comps["task_input"].submit):
-        evt(
-            fn=_add_task,
-            inputs=[comps["task_input"], comps["tasks_state"], comps["filter_state"]],
-            outputs=[comps["tasks_state"], comps["task_list_html"], comps["task_input"]],
-            show_progress="hidden",
-        )
-
-    def _filter_change(tasks: list[dict], mode: str):
-        return mode, render_task_list(tasks, mode), _render_filter_tabs(mode)
-
-    comps["filter_radio"].change(
-        fn=_filter_change,
-        inputs=[comps["tasks_state"], comps["filter_radio"]],
-        outputs=[comps["filter_state"], comps["task_list_html"], comps["filter_html"]],
-        show_progress="hidden",
-    )
 
     def _toggle_task(task_id: str, tasks: list[dict], mode: str):
         if not task_id:

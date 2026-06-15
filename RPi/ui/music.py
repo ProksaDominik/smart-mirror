@@ -2,6 +2,8 @@ import os
 import glob
 import random
 import threading
+
+os.environ.setdefault("SDL_AUDIODRIVER", "pulse")
 import pygame
 
 # MP3 lives alongside this file in RPi/ui/
@@ -10,7 +12,7 @@ SUPPORTED_EXTENSIONS = ("*.mp3", "*.ogg", "*.wav")
 
 UNDER_VOLUME = 0.08
 START_SECONDS = 4.0
-DURATION_SECONDS = 10.0
+DURATION_SECONDS = 60.0
 
 _active = False
 _played_once = False

@@ -35,7 +35,8 @@ def _model_exists() -> bool:
 
 
 def _calendar_token_exists(base_dir: Path) -> bool:
-    return (base_dir / "token.json").exists() or (base_dir / "data" / "token.json").exists()
+    tokens_dir = base_dir / "data" / "tokens"
+    return tokens_dir.is_dir() and any(tokens_dir.glob("*.json"))
 
 
 def _step_card(
@@ -81,10 +82,10 @@ def _step_card(
         {num_html}
         <div style="flex:1;">
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-                <div style="font-size:18px;font-weight:600;color:{title_color};">{title}</div>
+                <div style="font-size:20px;font-weight:600;color:{title_color};">{title}</div>
                 {badge_html}
             </div>
-            <div style="font-size:14px;color:{desc_color};line-height:1.6;">{description}</div>
+            <div style="font-size:15px;color:{desc_color};line-height:1.7;">{description}</div>
         </div>
     </div>
 </div>"""
@@ -183,14 +184,13 @@ def render_about(
     {_SIDEBAR}
 
     <div style="padding:48px 56px;">
-        <div style="font-size:40px;font-weight:700;color:{C_WHITE};
-                    margin-bottom:8px;">Getting Started</div>
-        <div style="font-size:14px;color:{C_MUTED};margin-bottom:40px;">
+        <div style="font-size:46px;font-weight:700;color:{C_WHITE};
+                    margin-bottom:8px;">About</div>
+        <div style="font-size:16px;color:{C_MUTED};margin-bottom:40px;">
             Complete these steps to activate your SmartMirror</div>
 
         {_step_card("01", "Connect Your Device",
-            'Power on the Raspberry Pi and connect the 10.1" LCD via HDMI. '
-            "Attach the USB camera module and verify the connection.",
+            'Power on the Raspberry Pi and connect the display via HDMI.',
             step1)}
 
         {_step_card("02", "Recognised Users",
@@ -198,10 +198,8 @@ def render_about(
             step2)}
 
         {_step_card("03", "Sync Google Calendar",
-            "Authorise the SmartMirror to pull daily events from Google Calendar. "
-            "Place <code style='background:{C_CARD};padding:1px 5px;border-radius:3px;"
-            "font-size:12px;'>credentials.json</code> in the RPi folder, "
-            "then click <b>Sync Now</b> in the Operating tab.",
+            "Authorise the SmartMirror to access your Google Calendar. "
+            "Go to the Operating tab and click <b>Link Calendar</b>.",
             step3)}
 
         {_step_card("04", "Start Your Morning",
@@ -213,7 +211,7 @@ def render_about(
 
 
 def build_about_tab(ctx: AppContext) -> dict:
-    with gr.TabItem("Getting Started", id="about", render_children=False):
+    with gr.TabItem("About", id="about"):
         about_html = gr.HTML(
             render_about(cam_ok=True, model_ok=_model_exists(), calendar_ok=False),
             sanitize_html=False,

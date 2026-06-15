@@ -205,6 +205,37 @@ def _render_left(events: list[dict]) -> str:
 </div>"""
 
 
+def _render_display_tasks(tasks: list[dict]) -> str:
+    if not tasks:
+        return ""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    rows = ""
+    for t in tasks:
+        if t.get("completed"):
+            continue
+        title = t.get("title", t.get("text", ""))
+        due   = t.get("due", "")
+        is_today = due == today
+        color = C_CYAN if is_today else C_MUTED
+        today_label = f'<div style="font-size:11px;color:{C_CYAN};margin-top:2px;">Today</div>' if is_today else ""
+        rows += (
+            f'<div style="background:{C_CARD};border-radius:10px;padding:10px 14px;'
+            f'margin-bottom:6px;border-left:3px solid {color};">'
+            f'<div style="font-size:13px;color:#fff;">{title}</div>'
+            f'{today_label}'
+            f'</div>'
+        )
+    if not rows:
+        return ""
+    return (
+        f'<div style="font-family:Inter,sans-serif;padding:0 24px 24px;">'
+        f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
+        f'color:{C_CYAN};margin-bottom:10px;">To-Do List</div>'
+        f'{rows}</div>'
+    )
+
+
 def _render_right(weather_data: dict | None, status: dict) -> str:
     w = _parse_weather(weather_data)
 
@@ -294,18 +325,32 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 # ── YOLO face recognition ─────────────────────────────────────────────────────
 
 # ── Recognition tuning ───────────────────────────────────────────────────────
-_DRAW_CONF      = 0.35   # min conf to draw a box at all
-_GREET_CONF     = 0.70   # min conf for a frame to count as any vote (known or unknown)
-_ID_CONF        = 0.60   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
-_MIN_FACE_FRAC  = 0.08   # face narrower than 8 % of frame → "come closer"
-_ZOOM_FACE_FRAC = 0.30   # face narrower than 30 % of frame → re-run on zoomed crop
+_DRAW_CONF      = 0.30   # min conf to draw a box at all
+_GREET_CONF     = 0.30   # min conf for a frame to count as any vote (known or unknown)
+_ID_CONF        = 0.70   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
+_MIN_FACE_FRAC  = 0.05   # face narrower than 5 % of frame → "come closer"
+_ZOOM_FACE_FRAC = 0.20   # face narrower than 20 % of frame → re-run on zoomed crop
 _VOTE_WINDOW    = 10     # how many recent frames we remember
-_VOTE_MIN       = 6      # same name must win this many votes to be greeted
+_VOTE_MIN       = 4      # same name must win this many votes to be greeted
 _NAME_HOLD_SEC  = 10.0   # keep the greeting up this long after confirmation
 
 _votes: deque = deque(maxlen=_VOTE_WINDOW)
 _confirmed_name: str | None = None
 _confirmed_at: float = 0.0
+
+# Module-level scan state — reset by demo.load() on every page refresh
+_scan_state: dict = {"done": False, "initialized": False}
+
+
+def reset_scan_state() -> None:
+    """Called on every page load to wipe YOLO state for the new session."""
+    global _current_user, _confirmed_name, _confirmed_at
+    _votes.clear()
+    _confirmed_name = None
+    _confirmed_at = 0.0
+    _current_user = ""
+    _scan_state["done"] = False
+    _scan_state["initialized"] = False
 
 
 def _largest_box(result):
@@ -339,6 +384,7 @@ def _predict_frame(
         imgsz=640, verbose=False,
     )[0]
     box = _largest_box(result)
+    print(f"[YOLO] boxes={len(result.boxes) if result.boxes else 0} best={f'{box[4]} {box[5]:.2f}' if box else 'none'}")
 
     name: str | None = None
     conf = 0.0
@@ -462,12 +508,13 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
         "cloud": False, "weather_api": initial_weather is not None,
     }
 
-    with gr.TabItem("Display", id="display", render_children=False):
+    with gr.TabItem("Data", id="display"):
         with gr.Row():
 
-            # LEFT: clock + schedule
+            # LEFT: clock + schedule + to-do list (populated after face scan)
             with gr.Column(scale=1):
-                left_html = gr.HTML(_render_left(SAMPLE_EVENTS), sanitize_html=False)
+                left_html    = gr.HTML(_render_left([]), sanitize_html=False)
+                tasks_html   = gr.HTML(_render_display_tasks([]), sanitize_html=False)
 
             # CENTER: live webcam + automatic face recognition
             with gr.Column(scale=2):
@@ -492,13 +539,16 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
                 )
 
         weather_state      = gr.State(initial_weather)
-        events_state       = gr.State(list(SAMPLE_EVENTS))
+        events_state       = gr.State([])
         status_state       = gr.State(initial_status)
         current_user_state = gr.State("")   # Set when a face is confirmed
+        synced_user_state  = gr.State("")   # Tracks who was last synced
         weather_timer      = gr.Timer(value=300.0, active=True)
+        sync_timer         = gr.Timer(value=2.0, active=True)
 
     return {
         "left_html":          left_html,
+        "tasks_html":         tasks_html,
         "right_html":         right_html,
         "greeting_html":      greeting_html,
         "webcam":             webcam,
@@ -506,58 +556,150 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
         "events_state":       events_state,
         "status_state":       status_state,
         "current_user_state": current_user_state,
+        "synced_user_state":  synced_user_state,
         "weather_timer":      weather_timer,
+        "sync_timer":         sync_timer,
     }
 
 
 def _welcome_audio(name: str) -> None:
-    """Speak a personalised greeting and play music. Runs in a daemon thread."""
+    """Speak a personalised greeting then read today's tasks. Runs in a daemon thread."""
     try:
         from ui import voice as _voice
-        msg = f"{_time_period()}, {name}! Welcome to your SmartMirror."
-        _voice.speak(msg)
+        import time
+
+        # Greeting — plays while the calendar sync runs in parallel
+        _voice.speak(f"{_time_period()} sir!")
+
+        # Wait briefly for the calendar sync to finish and populate the DB
+        time.sleep(2)
+
+        # Read today's tasks
+        try:
+            import db, random
+            from datetime import date as _date
+            today = _date.today().isoformat()
+            tasks = [
+                t for t in db.load_tasks()
+                if t.get("due") == today and not t.get("completed")
+            ]
+
+            import re as _re
+
+            _ACTION_VERBS = {
+                "go", "buy", "pick", "call", "visit", "meet", "send", "check",
+                "pay", "get", "attend", "finish", "complete", "submit", "take",
+                "bring", "book", "do", "make", "fix", "clean", "prepare",
+                "review", "update", "write", "read", "email", "text", "order",
+                "plan", "confirm", "cancel", "reply", "respond", "print", "sign",
+                "return", "collect", "drop", "deliver", "watch", "study",
+                "practice", "grab", "join", "schedule", "organise", "organize",
+            }
+            _VERB_STARTERS = [
+                "you need to", "don't forget to", "you've got to",
+                "make sure to", "remember to", "you should",
+            ]
+            _NOUN_STARTERS = [
+                "you've got", "you have", "don't forget you have",
+                "remember you have", "there's",
+            ]
+
+            def _naturalize(title: str) -> str:
+                t = title.strip()
+                first_word = t.split()[0].lower() if t else ""
+                if first_word in _ACTION_VERBS:
+                    return f"{random.choice(_VERB_STARTERS)} {t.lower()}"
+                return f"{random.choice(_NOUN_STARTERS)} {t.lower()}"
+
+            def _task_phrase(task: dict) -> str:
+                """Build a natural spoken phrase for a task, placing any time at the end."""
+                raw = (task.get("title") or task.get("text") or "").strip()
+                # Calendar tasks come as "16:00 – Buy flowers" — split time from title
+                m = _re.match(r'^(\d{1,2}:\d{2})\s*[–\-]\s*(.+)$', raw)
+                if m:
+                    time_str = m.group(1)
+                    title    = m.group(2).strip()
+                    return f"{_naturalize(title)} at {time_str}"
+                return _naturalize(raw)
+
+            connectors = ["after that", "then", "also", "and later"]
+
+            if not tasks:
+                _voice.speak("Your to do list is clear today, sir. Take it easy and enjoy the day!")
+            elif len(tasks) == 1:
+                _voice.speak(
+                    f"Just one thing on your plate today, sir. {_task_phrase(tasks[0])}. "
+                    f"Make it count. Have a great day!"
+                )
+            elif len(tasks) == 2:
+                t0 = _task_phrase(tasks[0])
+                t1 = _task_phrase(tasks[1])
+                _voice.speak(
+                    f"You have two things lined up today, sir. First, {t0}. "
+                    f"And {t1}. Stay on top of it. Have a wonderful day!"
+                )
+            else:
+                items = tasks[:4]
+                parts = []
+                for i, t in enumerate(items):
+                    if i == 0:
+                        parts.append(f"first, {_task_phrase(t)}")
+                    elif i == len(items) - 1:
+                        parts.append(f"and finally, {_task_phrase(t)}")
+                    else:
+                        parts.append(f"{random.choice(connectors)}, {_task_phrase(t)}")
+                extra = f" You also have {len(tasks) - 4} more after that." if len(tasks) > 4 else ""
+                _voice.speak(
+                    f"You've got {len(tasks)} things on your to do list today, sir. "
+                    + ". ".join(parts) + f".{extra} Stay sharp and have a brilliant day!"
+                )
+        except Exception as exc:
+            print(f"[Welcome audio tasks] {exc}")
+
+        # Stop music once all speech is done
+        from ui import music as _music
+        _music.stop()
     except Exception as exc:
         print(f"[Welcome audio] {exc}")
 
 
-def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
-    # Reset module-level voting state so each app start is a fresh scan.
-    global _votes, _confirmed_name, _confirmed_at
-    _votes.clear()
-    _confirmed_name = None
-    _confirmed_at = 0.0
-
-    # done=True the moment a face (known or unknown) is confirmed.
-    # All subsequent stream ticks become instant no-ops — YOLO never runs again.
-    _state = {"done": False}
-
+def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None = None) -> None:
     _PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
 
-    _NOOP = (gr.update(), gr.update())   # No-op for both outputs
+    _NOOP = (gr.update(), gr.update())
 
     def _process_frame(img):
-        global _current_user
-        if _state["done"]:
+        global _current_user, _confirmed_name, _confirmed_at
+
+        if _scan_state["done"]:
             return _NOOP
 
+        if not _scan_state["initialized"]:
+            # First frame after a page refresh — wipe voting state from previous scan
+            _votes.clear()
+            _confirmed_name = None
+            _confirmed_at = 0.0
+            _current_user = ""
+            _scan_state["initialized"] = True
+
         if img is None:
-            return _NOOP
+            return _greeting_html("Looking for a face…"), gr.update()
 
         _, summary = _predict_frame(img)
 
         if summary == "Unregistered face recognized":
-            _state["done"] = True
+            _scan_state["done"] = True
             return _unregistered_html(), "__unknown__"
 
         for prefix in _PERIODS:
             if summary.startswith(prefix):
                 name = summary[len(prefix):]
                 _current_user = name
-                _state["done"] = True
+                _scan_state["done"] = True
                 threading.Thread(target=_welcome_audio, args=(name,), daemon=True).start()
                 return _recognised_html(name), name
 
-        return _NOOP   # Still scanning — touch nothing
+        return _greeting_html(summary), gr.update()
 
     comps["webcam"].stream(
         fn=_process_frame,
@@ -576,5 +718,32 @@ def wire_display_callbacks(comps: dict, ctx: AppContext) -> None:
         fn=_weather_tick,
         inputs=[comps["weather_state"], comps["status_state"]],
         outputs=[comps["right_html"], comps["weather_state"], comps["status_state"]],
+        show_progress="hidden",
+    )
+
+    def _sync_tick(synced_user):
+        """Fires every 2 s. If _current_user changed, sync calendar and update panels."""
+        name = _current_user
+        if not name or name == synced_user:
+            return gr.update(), gr.update(), synced_user
+        try:
+            from ui.sm_operating import try_google_calendar_sync, events_to_cal_tasks
+            import db
+            events, msg = try_google_calendar_sync(ctx.base_dir, name)
+            print(f"[SYNC] {name}: {len(events)} events — {msg}")
+            cal_tasks = events_to_cal_tasks(events)
+            try:
+                db.replace_calendar_tasks(cal_tasks)
+            except Exception as exc:
+                print(f"[SYNC] DB error: {exc}")
+            return _render_left(events), _render_display_tasks(cal_tasks), name
+        except Exception as exc:
+            print(f"[SYNC] failed: {exc}")
+            return gr.update(), gr.update(), synced_user
+
+    comps["sync_timer"].tick(
+        fn=_sync_tick,
+        inputs=[comps["synced_user_state"]],
+        outputs=[comps["left_html"], comps["tasks_html"], comps["synced_user_state"]],
         show_progress="hidden",
     )

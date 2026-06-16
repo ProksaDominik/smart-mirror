@@ -8,7 +8,7 @@ PORT=8501
 OUTPUT=$(wlr-randr 2>/dev/null | awk 'NR==1{print $1}')
 if [ -n "$OUTPUT" ]; then
     echo "[mirror] Rotating $OUTPUT 90°"
-    wlr-randr --output "$OUTPUT" --transform 270
+    wlr-randr --output "$OUTPUT" --transform 90
 fi
 
 # Reset Chromium exit state so it never shows the "restore pages?" dialog
@@ -19,6 +19,7 @@ if [ -f "$PREFS" ]; then
 fi
 
 exec chromium \
+    --password-store=basic \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \

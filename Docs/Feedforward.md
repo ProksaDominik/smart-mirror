@@ -44,6 +44,18 @@ This is the feedback on my questions.
 
 - Feedback 1: lcd display, on the lcd display there will be acrylic plexiglass and on that there will be one way mirror film. 
 
+## mvp1 (Date: 02./05/2026)
+
+Lecturer: Stijn, Geert, Thomas 
+
+Questions for this conversation:
+
+- Question 1: is my dataset ok ? 
+
+This is the feedback on my questions.
+
+- Feedback 1: I need to redo my model becuase I am using classification and we need to use bounding boxes.
+
 ## Conversation 2 (Date: 05/06/2026)
 
 Lecturer: Pitrijan 
@@ -57,7 +69,19 @@ This is the feedback on my questions.
 - Feedback 1: frame will be made out of wood and enclosure from acrylic pvc.
 
 
-## Conversation 3 (Date: 09/06/2026)
+## mvp2 (Date: 09/06/2026)
+
+Lecturer: Marie, Tijn, Nathan
+
+Questions for this conversation: 
+
+- Question 1: is my model wiorking fine ?  
+
+This is the feedback on my questions.
+
+- Feedback 1: I need to retrain my model, use more simple backround and a variety of lighting.
+
+## Conversation 3 (Date: 10/06/2026)
 
 Lecturer: Geert
 Questions for this conversation: what kind of sepaker should I use for my project 
@@ -67,3 +91,17 @@ Questions for this conversation: what kind of sepaker should I use for my projec
 This is the feedback on my questions.
 
 - Feedback 1: You should use usb speaker since its the easiest way.
+
+
+
+
+## Conversation 4  (Date: 15/06/2026)
+
+Lecturer: Geert
+Questions for this conversation: 
+
+- [x] Question 1: My speakers doesnt work with my raspberry pi, Can you tell me why ?
+
+This is the feedback on my questions.
+
+- Feedback 1: we plugged in the power for the speakers to the different source and it worked, so the pi didnt have enough power to power the speakers. 

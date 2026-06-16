@@ -331,11 +331,12 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 # ── Recognition tuning ───────────────────────────────────────────────────────
 _DRAW_CONF      = 0.30   # min conf to draw a box at all
 _GREET_CONF     = 0.30   # min conf for a frame to count as any vote (known or unknown)
-_ID_CONF        = 0.85   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__" (TIGHTENED from 0.70)
+_ID_CONF        = 0.70   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
+_PER_NAME_CONF  = {"Radu": 0.82}  # higher bar for names prone to false positives
 _MIN_FACE_FRAC  = 0.05   # face narrower than 5 % of frame → "come closer"
 _ZOOM_FACE_FRAC = 0.20   # face narrower than 20 % of frame → re-run on zoomed crop
 _VOTE_WINDOW    = 10     # how many recent frames we remember
-_VOTE_MIN       = 7      # same name must win this many votes to be greeted (TIGHTENED from 4 to 7/10)
+_VOTE_MIN       = 5      # same name must win this many votes to be greeted
 _NAME_HOLD_SEC  = 10.0   # keep the greeting up this long after confirmation
 
 _votes: deque = deque(maxlen=_VOTE_WINDOW)
@@ -430,8 +431,8 @@ def _predict_frame(
             if zbox:
                 name, conf = zbox[4], zbox[5]
 
-    # Vote: above _ID_CONF → specific name; face detected but below → "__unknown__".
-    if name and conf >= _ID_CONF:
+    # Vote: above threshold → specific name; face detected but below → "__unknown__".
+    if name and conf >= _PER_NAME_CONF.get(name, _ID_CONF):
         vote = name
     elif box is not None and not too_far:
         vote = "__unknown__"   # Face seen but not confident enough to name
@@ -526,7 +527,7 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
         "cloud": False, "weather_api": initial_weather is not None,
     }
 
-    with gr.TabItem("Data", id="display"):
+    with gr.TabItem("Operating", id="display"):
         with gr.Row():
 
             # LEFT: clock + schedule + to-do list (populated after face scan)
@@ -718,6 +719,7 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
         print(f"[FRAME] summary={summary!r}")
 
         if summary == "Unregistered face recognized":
+            _current_user = "__unknown__"
             threading.Thread(target=_unknown_audio, daemon=True).start()
             return _unregistered_html(), "__unknown__"
 

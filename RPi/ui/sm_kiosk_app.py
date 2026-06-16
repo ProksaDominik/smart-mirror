@@ -71,6 +71,10 @@ def build_kiosk_app(base_dir: Path) -> gr.Blocks:
             if not name or name == last_user:
                 return render_mirror(new_w, ev, name, tasks), new_w, ev, tasks, last_user
 
+            # Unknown face — show message on mirror but skip calendar sync
+            if name == "__unknown__":
+                return render_mirror(new_w, ev, name, tasks), new_w, ev, tasks, name
+
             # New user recognised — sync their calendar
             try:
                 from ui.sm_operating import try_google_calendar_sync, events_to_cal_tasks

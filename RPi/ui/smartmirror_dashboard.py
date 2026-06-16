@@ -14,6 +14,7 @@ import gradio as gr
 from hardware.setup import start_gpio
 from ui.context import AppContext
 from ui.sm_about import build_about_tab, wire_about_callbacks
+from ui.sm_debug import build_debug_tab, wire_debug_callbacks
 from ui.sm_display import (
     _render_left,
     _render_display_tasks,
@@ -207,11 +208,13 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             mirror_comps    = build_display_simple_tab(ctx, initial_weather=initial_weather)
             about_comps     = build_about_tab(ctx)
             operating_comps = build_operating_tab(ctx)
+            debug_comps     = build_debug_tab()
 
         wire_display_callbacks(display_comps, ctx, op_comps=operating_comps)
         wire_display_simple_callbacks(mirror_comps, ctx)
         wire_about_callbacks(about_comps, ctx)
         wire_operating_callbacks(operating_comps, ctx)
+        wire_debug_callbacks(debug_comps)
 
         def _on_load():
             reset_scan_state()  # Always first — must not be delayed by anything below

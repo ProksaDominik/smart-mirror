@@ -40,6 +40,28 @@ def render_mirror(
     w = _parse_weather(weather_data)
     M = "#C8C8DC"  # brighter muted for LCD visibility
 
+    # Unknown face — full-screen warning
+    if name == "__unknown__":
+        return """
+<div style="
+    font-family:'Inter',sans-serif;
+    background:#000;
+    height:100vh;
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    box-sizing:border-box;
+">
+  <div style="font-size:100px;margin-bottom:32px;">⚠️</div>
+  <div style="font-size:14px;letter-spacing:.3em;text-transform:uppercase;
+              color:#FF3366;margin-bottom:20px;">Unknown</div>
+  <div style="font-size:48px;font-weight:300;color:#fff;text-align:center;
+              line-height:1.2;">Unregistered<br>face</div>
+  <div style="width:80px;height:3px;background:#FF3366;margin-top:32px;border-radius:2px;"></div>
+</div>"""
+
     # Greeting section
     if name and name != "__unknown__":
         from ui.sm_display import _time_period

@@ -472,7 +472,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
         print(f"[DB] startup clear failed: {exc}")
     tasks_init = load_tasks(ctx.base_dir)
 
-    with gr.TabItem("Operating", id="operating"):
+    with gr.TabItem("Data", id="operating"):
 
         gr.HTML(
             f'<style>'

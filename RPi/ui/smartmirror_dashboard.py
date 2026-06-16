@@ -233,7 +233,6 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
         )
 
         demo.load(fn=None, js=_CLOCK_JS)
-        demo.load(fn=None, js=_WEBCAM_JS)
         demo.load(fn=None, js=_KIOSK_JS)
 
         # When a face is confirmed → sync calendar and update all panels including Mirror tab

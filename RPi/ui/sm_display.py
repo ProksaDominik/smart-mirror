@@ -36,6 +36,71 @@ from ui.smartmirror_theme import (
 # Currently recognised person — set once per session, read by Operating tab.
 _current_user: str = ""
 
+# ── Raspberry Pi Camera (Picamera2, lazy-loaded once) ─────────────────────────
+
+_picam2 = None
+_picam2_lock = threading.Lock()
+
+
+def _get_picam():
+    global _picam2
+    if _picam2 is not None:
+        return _picam2
+    with _picam2_lock:
+        if _picam2 is None:
+            try:
+                from picamera2 import Picamera2
+                cam = Picamera2()
+                cam.configure(cam.create_preview_configuration(
+                    main={"format": "RGB888", "size": (640, 480)}
+                ))
+                cam.start()
+                _picam2 = cam
+                print("[PiCam] Started successfully")
+            except Exception as exc:
+                print(f"[PiCam] Failed to start: {exc}")
+    return _picam2
+
+
+def capture_frame() -> Image.Image | None:
+    """Capture one frame from the Pi camera. Returns a PIL RGB image or None on failure."""
+    cam = _get_picam()
+    if cam is None:
+        return None
+    try:
+        return Image.fromarray(cam.capture_array())
+    except Exception as exc:
+        print(f"[PiCam] Capture error: {exc}")
+        return None
+
+
+# Background frame buffer — updated by a daemon thread for smooth display
+_latest_frame: Image.Image | None = None
+_frame_lock = threading.Lock()
+
+
+def _start_capture_thread() -> None:
+    def _loop():
+        global _latest_frame
+        while True:
+            img = capture_frame()
+            if img is not None:
+                with _frame_lock:
+                    _latest_frame = img
+            time.sleep(0.08)   # ~12 fps capture
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+
+def get_latest_frame() -> Image.Image | None:
+    with _frame_lock:
+        return _latest_frame
+
+
+_start_capture_thread()
+
+
 # ── YOLO model (lazy-loaded once) ─────────────────────────────────────────────
 
 _yolo_model = None
@@ -445,17 +510,6 @@ def _predict_frame(
         if n >= _VOTE_MIN:
             _confirmed_name, _confirmed_at = winner, time.monotonic()
 
-    # Annotate the frame.
-    annotated = img_bgr.copy()
-    if box:
-        x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
-        label = f"{name} {conf:.2f}" if name else "..."
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 245, 255), 2)
-        cv2.putText(
-            annotated, label, (x1, max(0, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 245, 255), 2,
-        )
-
     if _confirmed_name and time.monotonic() - _confirmed_at < _NAME_HOLD_SEC:
         if _confirmed_name == "__unknown__":
             summary = "Unregistered face recognized"
@@ -468,7 +522,7 @@ def _predict_frame(
     else:
         summary = "No one detected"
 
-    return Image.fromarray(annotated[..., ::-1]), summary
+    return img, summary
 
 
 def _time_period() -> str:
@@ -535,20 +589,20 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
                 left_html    = gr.HTML(_render_left([]), sanitize_html=False)
                 tasks_html   = gr.HTML(_render_display_tasks([]), sanitize_html=False)
 
-            # CENTER: live webcam + automatic face recognition
+            # CENTER: Pi camera feed + automatic face recognition
             with gr.Column(scale=2):
                 greeting_html = gr.HTML(
                     _greeting_html("Looking for a face…"),
                     sanitize_html=False,
                 )
-                webcam = gr.Image(
-                    sources=["webcam"],
-                    streaming=True,
-                    type="pil",
+                cam_image = gr.Image(
                     label="Camera",
                     show_label=False,
                     container=False,
+                    interactive=False,
                 )
+                cam_timer      = gr.Timer(value=0.1,  active=True)   # display ~10 fps
+                recog_timer    = gr.Timer(value=1.5,  active=True)   # YOLO recognition
 
             # RIGHT: weather + system status
             with gr.Column(scale=1):
@@ -570,7 +624,9 @@ def build_display_tab(ctx: AppContext, initial_weather=None) -> dict:
         "tasks_html":         tasks_html,
         "right_html":         right_html,
         "greeting_html":      greeting_html,
-        "webcam":             webcam,
+        "cam_image":          cam_image,
+        "cam_timer":          cam_timer,
+        "recog_timer":        recog_timer,
         "weather_state":      weather_state,
         "events_state":       events_state,
         "status_state":       status_state,
@@ -701,22 +757,29 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
 
     _NOOP = (gr.update(), gr.update())
 
-    def _process_frame(img, session_user):
+    def _display_tick():
+        """Fast tick — just pushes the latest camera frame to the UI."""
+        return gr.update(value=get_latest_frame())
+
+    comps["cam_timer"].tick(
+        fn=_display_tick,
+        outputs=[comps["cam_image"]],
+        show_progress="hidden",
+    )
+
+    def _recog_tick(session_user):
+        """Slow tick — runs YOLO recognition and updates the greeting."""
         global _current_user
 
-        print(f"[FRAME] session_user={session_user!r} img={'YES' if img is not None else 'None'}")
-
-        # session_user is gr.State("") — resets to "" on every page refresh.
-        # Once a face is confirmed, it holds the name and stops scanning.
-        # Old-session in-flight frames carry the old confirmed name → NOOP.
         if session_user:
-            return _NOOP
+            return gr.update(), gr.update()
 
+        img = get_latest_frame()
         if img is None:
-            return _greeting_html("Looking for a face…"), gr.update()
+            return _greeting_html("Camera not available…"), gr.update()
 
         _, summary = _predict_frame(img)
-        print(f"[FRAME] summary={summary!r}")
+        print(f"[RECOG] summary={summary!r}")
 
         if summary == "Unregistered face recognized":
             _current_user = "__unknown__"
@@ -732,11 +795,10 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
 
         return _greeting_html(summary), gr.update()
 
-    comps["webcam"].stream(
-        fn=_process_frame,
-        inputs=[comps["webcam"], comps["current_user_state"]],
+    comps["recog_timer"].tick(
+        fn=_recog_tick,
+        inputs=[comps["current_user_state"]],
         outputs=[comps["greeting_html"], comps["current_user_state"]],
-        stream_every=1.0,
         show_progress="hidden",
     )
 

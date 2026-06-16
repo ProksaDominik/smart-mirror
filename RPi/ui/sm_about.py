@@ -218,7 +218,44 @@ def build_about_tab(ctx: AppContext) -> dict:
         )
         refresh_btn = gr.Button("↻ Refresh status", size="sm", variant="secondary")
 
-    return {"about_html": about_html, "refresh_btn": refresh_btn}
+        gr.HTML(
+            f'<div style="font-family:Inter,sans-serif;font-size:12px;letter-spacing:.10em;'
+            f'text-transform:uppercase;color:#00F5FF;padding:24px 0 12px;">Camera Test</div>',
+            sanitize_html=False,
+        )
+        with gr.Row():
+            with gr.Column(scale=1):
+                cam_preview = gr.Image(
+                    label="Pi Camera Live Preview",
+                    interactive=False,
+                    show_label=True,
+                )
+                cam_status = gr.Textbox(
+                    label="Status", value="Waiting for first frame…",
+                    interactive=False, show_label=True,
+                )
+                cam_test_timer = gr.Timer(value=1.0, active=True)
+            with gr.Column(scale=1):
+                gr.HTML(
+                    f'<div style="font-family:Inter,sans-serif;padding:16px;'
+                    f'background:#12121E;border:1px solid #1E1E2E;border-radius:10px;">'
+                    f'<div style="font-size:13px;color:#8B8BA8;line-height:1.8;">'
+                    f'This preview shows the raw Raspberry Pi camera feed without YOLO processing.<br><br>'
+                    f'If the image is blank or shows an error, check that:<br>'
+                    f'&nbsp;· The camera ribbon cable is firmly seated<br>'
+                    f'&nbsp;· <code>libcamera-hello</code> works in a terminal<br>'
+                    f'&nbsp;· <code>picamera2</code> is installed in the venv'
+                    f'</div></div>',
+                    sanitize_html=False,
+                )
+
+    return {
+        "about_html":      about_html,
+        "refresh_btn":     refresh_btn,
+        "cam_preview":     cam_preview,
+        "cam_status":      cam_status,
+        "cam_test_timer":  cam_test_timer,
+    }
 
 
 def wire_about_callbacks(comps: dict, ctx: AppContext) -> None:
@@ -233,5 +270,18 @@ def wire_about_callbacks(comps: dict, ctx: AppContext) -> None:
         fn=_refresh,
         inputs=None,
         outputs=[comps["about_html"]],
+        show_progress="hidden",
+    )
+
+    def _cam_test_tick():
+        from ui.sm_display import capture_frame
+        img = capture_frame()
+        if img is None:
+            return gr.update(), "Camera not available — check connection and picamera2 install."
+        return gr.update(value=img), f"OK — {img.width}×{img.height} px"
+
+    comps["cam_test_timer"].tick(
+        fn=_cam_test_tick,
+        outputs=[comps["cam_preview"], comps["cam_status"]],
         show_progress="hidden",
     )

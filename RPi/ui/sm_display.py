@@ -68,7 +68,12 @@ def capture_frame() -> Image.Image | None:
     if cam is None:
         return None
     try:
-        return Image.fromarray(cam.capture_array())
+        frame = cam.capture_array()
+        # Picamera2's "RGB888" format is actually BGR-ordered in practice
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # NOT flipped here — this frame feeds YOLO recognition, and the model
+        # was trained on un-mirrored faces. Flip only at display time.
+        return Image.fromarray(frame)
     except Exception as exc:
         print(f"[PiCam] Capture error: {exc}")
         return None
@@ -225,7 +230,7 @@ def _event_tag(title: str) -> str:
     if any(k in s for k in ("lecture", "school", "class", "stand-up", "meet")):
         return tag("School",   "rgba(123,47,255,0.2)",  C_PURPLE)
     if any(k in s for k in ("project", "check-in", "lab", "makerlab", "build")):
-        return tag("Project",  "rgba(0,245,255,0.15)",  C_CYAN)
+        return tag("Project",  "rgba(108,92,231,0.15)",  C_CYAN)
     return tag("Personal", "rgba(0,255,136,0.15)", C_GREEN)
 
 
@@ -245,7 +250,7 @@ def _render_left(events: list[dict]) -> str:
         title  = ev.get("title", "")
         active = ev.get("active", False)
         border = f"border-left:3px solid {C_CYAN};" if active else ""
-        bg     = "background:rgba(0,245,255,0.05);" if active else ""
+        bg     = "background:rgba(108,92,231,0.05);" if active else ""
         events_html += f"""
         <div style="background:{C_CARD};{bg}border-radius:10px;padding:12px 16px;
                     margin-bottom:8px;{border}display:flex;justify-content:space-between;
@@ -298,7 +303,7 @@ def _render_display_tasks(tasks: list[dict]) -> str:
     if not rows:
         return ""
     return (
-        f'<div style="font-family:Inter,sans-serif;padding:0 24px 24px;">'
+        f'<div style="font-family:Bebas Neue,sans-serif;padding:0 24px 24px;">'
         f'<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;'
         f'color:{C_CYAN};margin-bottom:10px;">To-Do List</div>'
         f'{rows}</div>'
@@ -397,12 +402,14 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 _DRAW_CONF      = 0.30   # min conf to draw a box at all
 _GREET_CONF     = 0.30   # min conf for a frame to count as any vote (known or unknown)
 _ID_CONF        = 0.70   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
-_PER_NAME_CONF  = {"Radu": 0.82}  # higher bar for names prone to false positives
+_PER_NAME_CONF  = {}  # per-name confidence overrides, if a specific person needs a different bar
 _MIN_FACE_FRAC  = 0.05   # face narrower than 5 % of frame → "come closer"
 _ZOOM_FACE_FRAC = 0.20   # face narrower than 20 % of frame → re-run on zoomed crop
 _VOTE_WINDOW    = 10     # how many recent frames we remember
 _VOTE_MIN       = 5      # same name must win this many votes to be greeted
 _NAME_HOLD_SEC  = 10.0   # keep the greeting up this long after confirmation
+_AUTO_RESET_SEC = 300.0  # auto-reset 5 min after a confirmation, ready for the next face
+_RECOG_INTERVAL = 1.5    # seconds between recognition attempts in the background loop
 
 _votes: deque = deque(maxlen=_VOTE_WINDOW)
 _confirmed_name: str | None = None
@@ -525,6 +532,110 @@ def _predict_frame(
     return img, summary
 
 
+_last_recognized_at: float = 0.0
+_PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
+
+
+def _recognition_loop() -> None:
+    """Runs continuously in the background — independent of any browser tab being
+    open. Drives _current_user so the kiosk works standalone, with no dashboard
+    session needed to 'keep recognition alive'."""
+    global _current_user, _last_recognized_at
+
+    while True:
+        time.sleep(_RECOG_INTERVAL)
+        try:
+            # Auto-reset N seconds after a confirmation so the next new face
+            # gets recognised fresh, with its own correctly synced to-do list.
+            if _current_user and time.monotonic() - _last_recognized_at > _AUTO_RESET_SEC:
+                print(f"[YOLO] Auto-reset after {_AUTO_RESET_SEC:.0f}s — ready for a new face")
+                reset_scan_state()
+                continue
+
+            if _current_user:
+                continue  # already confirmed and within the hold window
+
+            img = get_latest_frame()
+            if img is None:
+                continue
+
+            _, summary = _predict_frame(img)
+            print(f"[RECOG] summary={summary!r}")
+
+            if summary == "Unregistered face recognized":
+                _current_user = "__unknown__"
+                _last_recognized_at = time.monotonic()
+                threading.Thread(target=_unknown_audio, daemon=True).start()
+                continue
+
+            for prefix in _PERIODS:
+                if summary.startswith(prefix):
+                    name = summary[len(prefix):]
+                    _current_user = name
+                    _last_recognized_at = time.monotonic()
+                    threading.Thread(target=_welcome_audio, args=(name,), daemon=True).start()
+                    break
+        except Exception as exc:
+            print(f"[RECOG] background loop error: {exc}")
+
+
+def _start_recognition_thread() -> None:
+    t = threading.Thread(target=_recognition_loop, daemon=True)
+    t.start()
+
+
+_BUTTON_DEVICE_PATH = "/dev/input/event0"  # GPIO20 button, via dtoverlay=gpio-shutdown
+_BUTTON_LONG_PRESS_SEC = 1.5  # presses held longer than this are shutdown territory
+
+
+def _button_listener_loop() -> None:
+    """Short press of the physical button resets recognition, ready for a new
+    face — same effect as a manual kiosk page refresh, but from the button.
+    Long-press shutdown is handled entirely by systemd-logind
+    (HandlePowerKeyLongPress=poweroff in /etc/systemd/logind.conf) — that
+    happens independently of this thread, so it still works even if app.py
+    has crashed."""
+    try:
+        import evdev
+    except ImportError:
+        print("[Button] evdev not installed — physical button reset disabled")
+        return
+
+    try:
+        dev = evdev.InputDevice(_BUTTON_DEVICE_PATH)
+    except Exception as exc:
+        print(f"[Button] Could not open {_BUTTON_DEVICE_PATH}: {exc}")
+        return
+
+    pressed_at: float | None = None
+    for event in dev.read_loop():
+        if event.type != evdev.ecodes.EV_KEY or event.code != evdev.ecodes.KEY_POWER:
+            continue
+        if event.value == 1:  # key down
+            pressed_at = time.monotonic()
+        elif event.value == 0 and pressed_at is not None:  # key up
+            held = time.monotonic() - pressed_at
+            pressed_at = None
+            if held < _BUTTON_LONG_PRESS_SEC:
+                print(f"[Button] Short press ({held:.2f}s) — resetting, ready for a new face")
+                reset_scan_state()
+            # else: long press — logind already handles poweroff independently
+
+
+def _start_button_listener_thread() -> None:
+    t = threading.Thread(target=_button_listener_loop, daemon=True)
+    t.start()
+
+
+def _start_screen_power_thread() -> None:
+    """Disabled: toggling the physical HDMI output via wlr-randr left this
+    panel unable to wake back up reliably (confirmed on hardware — every
+    software layer reported success but the screen stayed dark). The
+    content-level blank black screen in render_mirror() already gives the
+    same "looks off" effect without this risk, so that's all we rely on."""
+    pass
+
+
 def _time_period() -> str:
     hour = datetime.now().hour
     if 5 <= hour < 12:
@@ -538,7 +649,7 @@ def _greeting_html(summary: str) -> str:
     """Idle / scanning state (no recognition yet)."""
     return (
         f'<div style="background:{C_CARD};border:1px solid {C_BORDER};border-radius:12px;'
-        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'padding:16px 24px;text-align:center;font-family:Bebas Neue,sans-serif;margin-bottom:8px;">'
         f'<div style="font-size:13px;color:{C_MUTED};letter-spacing:.08em;">{summary}</div>'
         f'</div>'
     )
@@ -549,7 +660,7 @@ def _recognised_html(name: str) -> str:
     period = _time_period()
     return (
         f'<div style="background:#0A1F1F;border:2px solid {C_CYAN};border-radius:12px;'
-        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'padding:16px 24px;text-align:center;font-family:Bebas Neue,sans-serif;margin-bottom:8px;">'
         f'<div style="font-size:10px;color:{C_CYAN};letter-spacing:.12em;'
         f'text-transform:uppercase;margin-bottom:6px;">Recognised</div>'
         f'<div style="font-size:22px;font-weight:600;color:#fff;">{period}, {name}</div>'
@@ -563,7 +674,7 @@ def _unregistered_html() -> str:
     """Card shown when a face is detected but not in the registered dataset."""
     return (
         f'<div style="background:#1F0A0A;border:2px solid {C_RED};border-radius:12px;'
-        f'padding:16px 24px;text-align:center;font-family:Inter,sans-serif;margin-bottom:8px;">'
+        f'padding:16px 24px;text-align:center;font-family:Bebas Neue,sans-serif;margin-bottom:8px;">'
         f'<div style="font-size:10px;color:{C_RED};letter-spacing:.12em;'
         f'text-transform:uppercase;margin-bottom:6px;">Unknown</div>'
         f'<div style="font-size:18px;font-weight:600;color:#fff;">Unregistered face recognized</div>'
@@ -753,13 +864,12 @@ def _unknown_audio() -> None:
 
 
 def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None = None) -> None:
-    _PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
-
-    _NOOP = (gr.update(), gr.update())
-
     def _display_tick():
-        """Fast tick — just pushes the latest camera frame to the UI."""
-        return gr.update(value=get_latest_frame())
+        """Fast tick — pushes the latest camera frame to the UI, mirrored for display only."""
+        img = get_latest_frame()
+        if img is not None:
+            img = Image.fromarray(np.fliplr(np.array(img)))
+        return gr.update(value=img)
 
     comps["cam_timer"].tick(
         fn=_display_tick,
@@ -767,33 +877,21 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
         show_progress="hidden",
     )
 
-    def _recog_tick(session_user):
-        """Slow tick — runs YOLO recognition and updates the greeting."""
-        global _current_user
+    def _recog_tick(_session_user):
+        """UI-only tick — reflects whatever the background recognition loop
+        (_recognition_loop, runs independent of any browser session) found."""
+        name = _current_user
 
-        if session_user:
-            return gr.update(), gr.update()
-
-        img = get_latest_frame()
-        if img is None:
-            return _greeting_html("Camera not available…"), gr.update()
-
-        _, summary = _predict_frame(img)
-        print(f"[RECOG] summary={summary!r}")
-
-        if summary == "Unregistered face recognized":
-            _current_user = "__unknown__"
-            threading.Thread(target=_unknown_audio, daemon=True).start()
+        if name == "__unknown__":
             return _unregistered_html(), "__unknown__"
 
-        for prefix in _PERIODS:
-            if summary.startswith(prefix):
-                name = summary[len(prefix):]
-                _current_user = name
-                threading.Thread(target=_welcome_audio, args=(name,), daemon=True).start()
-                return _recognised_html(name), name
+        if name:
+            return _recognised_html(name), name
 
-        return _greeting_html(summary), gr.update()
+        if get_latest_frame() is None:
+            return _greeting_html("Camera not available…"), ""
+
+        return _greeting_html("Looking for a face…"), ""
 
     comps["recog_timer"].tick(
         fn=_recog_tick,
@@ -840,3 +938,10 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
         outputs=[comps["left_html"], comps["tasks_html"], comps["synced_user_state"]],
         show_progress="hidden",
     )
+
+
+# Recognition runs in the background from the moment the app starts — no
+# dashboard tab or "start" button needed. The kiosk alone is fully sufficient.
+_start_recognition_thread()
+_start_screen_power_thread()
+_start_button_listener_thread()

@@ -93,7 +93,7 @@ def _step_card(
 
 def _people_pills() -> str:
     pills = "".join(
-        f'<span style="display:inline-block;background:rgba(0,245,255,0.12);'
+        f'<span style="display:inline-block;background:rgba(108,92,231,0.12);'
         f'border:1px solid {C_CYAN};color:{C_CYAN};border-radius:20px;'
         f'padding:4px 14px;font-size:13px;font-weight:500;margin:4px 4px 4px 0;">'
         f'{name}</span>'
@@ -219,8 +219,8 @@ def build_about_tab(ctx: AppContext) -> dict:
         refresh_btn = gr.Button("↻ Refresh status", size="sm", variant="secondary")
 
         gr.HTML(
-            f'<div style="font-family:Inter,sans-serif;font-size:12px;letter-spacing:.10em;'
-            f'text-transform:uppercase;color:#00F5FF;padding:24px 0 12px;">Camera Test</div>',
+            f'<div style="font-family:Bebas Neue,sans-serif;font-size:12px;letter-spacing:.10em;'
+            f'text-transform:uppercase;color:#6C5CE7;padding:24px 0 12px;">Camera Test</div>',
             sanitize_html=False,
         )
         with gr.Row():
@@ -237,7 +237,7 @@ def build_about_tab(ctx: AppContext) -> dict:
                 cam_test_timer = gr.Timer(value=1.0, active=True)
             with gr.Column(scale=1):
                 gr.HTML(
-                    f'<div style="font-family:Inter,sans-serif;padding:16px;'
+                    f'<div style="font-family:Bebas Neue,sans-serif;padding:16px;'
                     f'background:#12121E;border:1px solid #1E1E2E;border-radius:10px;">'
                     f'<div style="font-size:13px;color:#8B8BA8;line-height:1.8;">'
                     f'This preview shows the raw Raspberry Pi camera feed without YOLO processing.<br><br>'
@@ -275,10 +275,13 @@ def wire_about_callbacks(comps: dict, ctx: AppContext) -> None:
 
     def _cam_test_tick():
         from ui.sm_display import capture_frame
+        import numpy as np
+        from PIL import Image
         img = capture_frame()
         if img is None:
             return gr.update(), "Camera not available — check connection and picamera2 install."
-        return gr.update(value=img), f"OK — {img.width}×{img.height} px"
+        mirrored = Image.fromarray(np.fliplr(np.array(img)))
+        return gr.update(value=mirrored), f"OK — {img.width}×{img.height} px"
 
     comps["cam_test_timer"].tick(
         fn=_cam_test_tick,

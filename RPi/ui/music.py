@@ -27,7 +27,9 @@ def _find_tracks() -> list[str]:
 
 
 def play_under() -> None:
-    """Play music once for DURATION_SECONDS, only on the first call of the session."""
+    """Play music once for DURATION_SECONDS. Guarded by _played_once so a
+    burst of speak() calls within one greeting doesn't restart the track —
+    stop() resets the flag so the *next* greeting gets fresh music again."""
     global _active, _played_once, _stop_timer
 
     if _played_once:
@@ -56,17 +58,18 @@ def play_under() -> None:
 
 
 def _timed_stop() -> None:
-    global _active
+    global _active, _played_once
     if _active:
         try:
             pygame.mixer.music.stop()
         except pygame.error:
             pass
         _active = False
+    _played_once = False
 
 
 def stop() -> None:
-    global _active, _stop_timer
+    global _active, _played_once, _stop_timer
     if _stop_timer is not None:
         _stop_timer.cancel()
         _stop_timer = None
@@ -76,3 +79,4 @@ def stop() -> None:
         except pygame.error:
             pass
         _active = False
+    _played_once = False

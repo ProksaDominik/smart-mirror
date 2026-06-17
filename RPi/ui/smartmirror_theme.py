@@ -3,7 +3,7 @@
 # ── Palette (design.pdf) ──────────────────────────────────────────────────────
 C_BG     = "#0A0A0F"
 C_CARD   = "#12121E"
-C_CYAN   = "#00F5FF"
+C_CYAN   = "#6C5CE7"
 C_GREEN  = "#00FF88"
 C_PURPLE = "#7B2FFF"
 C_RED    = "#FF3366"
@@ -11,12 +11,17 @@ C_WHITE  = "#FFFFFF"
 C_MUTED  = "#8B8BA8"
 C_BORDER = "#1E1E2E"
 
+APP_FONT = "'Bebas Neue', sans-serif"
+
 APP_VERSION = "v1.3"
 
 SM_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=Playfair+Display:wght@400;500;700&family=Bebas+Neue&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; }
+
+/* Kiosk display has no mouse interaction — hide the cursor everywhere */
+*, *::before, *::after { cursor: none !important; }
 
 body,
 .gradio-container,
@@ -24,8 +29,8 @@ body,
 .wrap {
     background: #0A0A0F !important;
     color: #ffffff !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 15px !important;
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 18px !important;
 }
 
 .gradio-container {
@@ -42,27 +47,27 @@ footer { display: none !important; }
 .tab-nav {
     background: #12121E !important;
     border-bottom: 1px solid #1E1E2E !important;
-    padding: 0 24px !important;
+    padding: 0 28px !important;
 }
 
 .tab-nav button {
     color: #8B8BA8 !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 13px !important;
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 19px !important;
     font-weight: 500 !important;
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
-    padding: 16px 24px !important;
+    padding: 22px 32px !important;
     border: none !important;
     background: transparent !important;
-    border-bottom: 2px solid transparent !important;
+    border-bottom: 3px solid transparent !important;
     transition: color 0.2s, border-color 0.2s !important;
 }
 
 .tab-nav button.selected,
 .tab-nav button[aria-selected="true"] {
-    color: #00F5FF !important;
-    border-bottom-color: #00F5FF !important;
+    color: #6C5CE7 !important;
+    border-bottom-color: #6C5CE7 !important;
 }
 
 .tab-nav button:hover:not(.selected) { color: #ffffff !important; }
@@ -91,7 +96,7 @@ footer { display: none !important; }
 }
 
 /* ── Input / Slider overrides ────────────────────────────────────────────── */
-input[type=range] { accent-color: #00F5FF !important; }
+input[type=range] { accent-color: #6C5CE7 !important; }
 
 input[type=text],
 textarea {
@@ -99,7 +104,8 @@ textarea {
     border: 1px solid #1E1E2E !important;
     color: #ffffff !important;
     border-radius: 8px !important;
-    font-family: 'Inter', sans-serif !important;
+    font-family: 'Bebas Neue', sans-serif !important;
+    font-size: 17px !important;
 }
 
 input[type=text]:focus,
@@ -147,8 +153,8 @@ def dot(color: str) -> str:
 
 def tag(label: str, bg: str, color: str) -> str:
     return (
-        f'<span style="background:{bg};color:{color};padding:3px 10px;'
-        f'border-radius:20px;font-size:11px;font-weight:500;">{label}</span>'
+        f'<span style="background:{bg};color:{color};padding:5px 14px;'
+        f'border-radius:20px;font-size:14px;font-weight:500;">{label}</span>'
     )
 
 

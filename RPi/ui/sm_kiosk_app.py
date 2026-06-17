@@ -38,12 +38,16 @@ _KIOSK_CSS = SM_CSS + """
 html, body, .gradio-container, .gradio-container > .main {
     margin: 0 !important;
     padding: 0 !important;
+    width: 100vw !important;
     height: 100vh !important;
+    max-width: 100vw !important;
     overflow: hidden !important;
 }
-.block, .html-container {
+.block, .html-container, .form, .gap {
     padding: 0 !important;
     margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
     height: 100vh !important;
 }
 """
@@ -67,8 +71,12 @@ def build_kiosk_app(base_dir: Path) -> gr.Blocks:
             # Refresh weather every call (cached for 5 min)
             new_w = fetch_weather()
 
+            # No one recognised — clear any stale tasks/events from a previous person
+            if not name:
+                return render_mirror(new_w, [], "", []), new_w, [], [], ""
+
             # If user hasn't changed, just re-render with current data
-            if not name or name == last_user:
+            if name == last_user:
                 return render_mirror(new_w, ev, name, tasks), new_w, ev, tasks, last_user
 
             # Unknown face — show message on mirror but skip calendar sync
@@ -94,6 +102,20 @@ def build_kiosk_app(base_dir: Path) -> gr.Blocks:
             show_progress="hidden",
         )
 
+        def _on_load():
+            """Wipe recognition + local state on every page load so a stale
+            person's greeting/tasks never reappear after a refresh."""
+            import ui.sm_display as _disp
+            _disp.reset_scan_state()
+            fresh_weather = fetch_weather()
+            return render_mirror(fresh_weather, []), fresh_weather, [], [], ""
+
+        demo.load(
+            fn=_on_load,
+            inputs=None,
+            outputs=[mirror_html, weather_state, events_state, tasks_state, synced_user],
+            show_progress="hidden",
+        )
         demo.load(fn=None, js=_CLOCK_JS)
 
     return demo

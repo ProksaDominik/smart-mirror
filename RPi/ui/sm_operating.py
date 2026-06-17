@@ -220,7 +220,7 @@ def _render_task_row(task: dict, is_today: bool = True) -> str:
     check_icon   = "&#10003;" if done else ""
 
     row_style = (
-        f"border-left:3px solid {C_CYAN};background:rgba(0,245,255,0.05);"
+        f"border-left:3px solid {C_CYAN};background:rgba(108,92,231,0.05);"
         if is_today and not done else ""
     )
 
@@ -289,7 +289,7 @@ def _render_filter_tabs(active: str) -> str:
         items += (
             f'<div onclick="{js}" style="padding:8px 20px;border-radius:8px;{border}'
             f'background:{bg};color:{color};font-size:13px;font-weight:600;'
-            f'cursor:pointer;user-select:none;font-family:Inter,sans-serif;">{label}</div>'
+            f'cursor:pointer;user-select:none;font-family:Bebas Neue,sans-serif;">{label}</div>'
         )
     return f'<div style="display:flex;gap:8px;margin-bottom:16px;">{items}</div>'
 
@@ -328,12 +328,12 @@ def render_task_list(tasks: list[dict], filter_mode: str) -> str:
         f'<div style="color:{C_MUTED};font-size:14px;padding:16px 0;">{empty_msg}</div>'
         if not rows else ""
     )
-    return f'<div style="font-family:Inter,sans-serif;">{rows}{empty}</div>'
+    return f'<div style="font-family:Bebas Neue,sans-serif;">{rows}{empty}</div>'
 
 
 def _render_event_row(ev: dict, is_active: bool = False) -> str:
     border    = f"border-left:3px solid {C_CYAN};" if is_active else ""
-    bg        = "background:rgba(0,245,255,0.05);" if is_active else f"background:{C_CARD};"
+    bg        = "background:rgba(108,92,231,0.05);" if is_active else f"background:{C_CARD};"
     dot_color = C_CYAN if is_active else C_PURPLE
     return f"""
 <div style="{bg}{border}border-radius:10px;padding:12px 16px;margin-bottom:8px;">
@@ -405,7 +405,7 @@ def _hex_to_rgb(h: str) -> str:
 def _render_db_table(tasks: list[dict]) -> str:
     if not tasks:
         return (
-            f'<div style="font-family:Inter,sans-serif;color:{C_MUTED};'
+            f'<div style="font-family:Bebas Neue,sans-serif;color:{C_MUTED};'
             f'text-align:center;padding:32px;font-size:14px;">No tasks in database.</div>'
         )
     header = (
@@ -434,7 +434,7 @@ def _render_db_table(tasks: list[dict]) -> str:
             f'background:rgba(0,255,136,0.12);color:{C_GREEN};font-weight:600;">Done</span>'
             if done else
             f'<span style="font-size:11px;padding:2px 8px;border-radius:4px;'
-            f'background:rgba(0,245,255,0.10);color:{C_CYAN};font-weight:600;">Pending</span>'
+            f'background:rgba(108,92,231,0.10);color:{C_CYAN};font-weight:600;">Pending</span>'
         )
         del_js = (
             f"(function(){{var el=document.querySelector('#sm-db-delete textarea,#sm-db-delete input');"
@@ -457,7 +457,7 @@ def _render_db_table(tasks: list[dict]) -> str:
         )
     return (
         f'<div style="background:{C_CARD};border:1px solid {C_BORDER};'
-        f'border-radius:12px;overflow:hidden;font-family:Inter,sans-serif;">{header}{rows}</div>'
+        f'border-radius:12px;overflow:hidden;font-family:Bebas Neue,sans-serif;">{header}{rows}</div>'
     )
 
 
@@ -479,7 +479,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
             f'#sm-filter-radio{{position:absolute;left:-9999px;opacity:0;pointer-events:none;}}'
             f'#sm-task-action{{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0;}}'
             f'</style>'
-            f'<div style="font-family:Inter,sans-serif;padding:18px 32px;'
+            f'<div style="font-family:Bebas Neue,sans-serif;padding:18px 32px;'
             f'border-bottom:1px solid {C_BORDER};background:{C_CARD};'
             f'display:flex;align-items:center;justify-content:space-between;">'
             f'<div style="display:flex;align-items:center;gap:8px;">'
@@ -501,7 +501,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
             with gr.Column(scale=1):
                 gr.HTML(
                     f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
-                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
+                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Bebas Neue,sans-serif;">'
                     f'Schedule &amp; Tasks</div>',
                     sanitize_html=False,
                 )
@@ -517,7 +517,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
             with gr.Column(scale=1):
                 gr.HTML(
                     f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
-                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">'
+                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Bebas Neue,sans-serif;">'
                     f'Calendar Sync</div>',
                     sanitize_html=False,
                 )
@@ -538,7 +538,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
 
                 gr.HTML(
                     f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
-                    f'color:{C_CYAN};padding:20px 0 10px;font-family:Inter,sans-serif;">'
+                    f'color:{C_CYAN};padding:20px 0 10px;font-family:Bebas Neue,sans-serif;">'
                     f'Link a Google Calendar</div>'
                     f'<div style="font-size:13px;color:{C_MUTED};margin-bottom:12px;">'
                     f'Select a person, then click Link. A browser window will open on this Pi — '
@@ -560,7 +560,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
 
         # ── Database section ──────────────────────────────────────────────────
         gr.HTML(
-            f'<div style="font-family:Inter,sans-serif;padding:16px 0 0;'
+            f'<div style="font-family:Bebas Neue,sans-serif;padding:16px 0 0;'
             f'border-top:1px solid {C_BORDER};margin-top:8px;">'
             f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
             f'color:{C_CYAN};padding:16px 0 12px;">Database</div></div>',
@@ -578,7 +578,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
             with gr.Column(scale=1):
                 gr.HTML(
                     f'<div style="font-size:12px;letter-spacing:.10em;text-transform:uppercase;'
-                    f'color:{C_CYAN};padding:0 0 12px;font-family:Inter,sans-serif;">Add Task</div>',
+                    f'color:{C_CYAN};padding:0 0 12px;font-family:Bebas Neue,sans-serif;">Add Task</div>',
                     sanitize_html=False,
                 )
                 new_text   = gr.Textbox(label="Task description", placeholder="e.g. Buy groceries")
@@ -596,7 +596,7 @@ def build_operating_tab(ctx: AppContext) -> dict:
                 )
 
         gr.HTML(
-            f'<div style="font-family:Inter,sans-serif;padding:12px 0;'
+            f'<div style="font-family:Bebas Neue,sans-serif;padding:12px 0;'
             f'border-top:1px solid {C_BORDER};text-align:right;'
             f'font-size:12px;color:{C_GREEN};">All systems operational</div>',
             sanitize_html=False,

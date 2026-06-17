@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import gradio as gr
 
-from hardware.setup import start_gpio
 from ui.context import AppContext
 from ui.sm_about import build_about_tab, wire_about_callbacks
 from ui.sm_debug import build_debug_tab, wire_debug_callbacks
@@ -24,6 +23,7 @@ from ui.sm_display import (
     wire_display_callbacks,
 )
 from ui.sm_display_simple import (
+    _TAB_HEIGHT_CSS,
     build_display_simple_tab,
     render_mirror,
     wire_display_simple_callbacks,
@@ -32,20 +32,24 @@ from ui.sm_operating import build_operating_tab, wire_operating_callbacks
 from ui.smartmirror_theme import SM_CSS
 
 _SM_THEME = gr.themes.Base(
-    primary_hue="cyan",
+    primary_hue="purple",
     secondary_hue="purple",
-    font=gr.themes.GoogleFont("Inter"),
+    font=gr.themes.GoogleFont("Bebas Neue"),
 ).set(
     body_background_fill="#0A0A0F",
     body_text_color="#ffffff",
     background_fill_primary="#0A0A0F",
     background_fill_secondary="#12121E",
     border_color_primary="#1E1E2E",
-    color_accent_soft="#00F5FF",
+    color_accent_soft="#6C5CE7",
     input_background_fill="#12121E",
-    button_primary_background_fill="#00F5FF",
+    button_primary_background_fill="#6C5CE7",
     button_primary_text_color="#000000",
     block_label_text_color="#8B8BA8",
+    body_text_size="18px",
+    button_large_text_size="18px",
+    button_small_text_size="16px",
+    input_text_size="17px",
 )
 
 _WEBCAM_JS = """
@@ -255,7 +259,7 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
                 db.replace_calendar_tasks(cal_tasks)
             except Exception as exc:
                 print(f"[DB] face-sync failed: {exc}")
-            mirror = render_mirror(mirror_w, events, name, cal_tasks)
+            mirror = render_mirror(mirror_w, events, name, cal_tasks, height_css=_TAB_HEIGHT_CSS)
             return (
                 events,
                 _render_left(events),
@@ -296,32 +300,28 @@ def build_smartmirror_dashboard(ctx: AppContext) -> gr.Blocks:
             show_progress="hidden",
         )
         operating_comps["events_state"].change(
-            fn=lambda ev, w, name, tasks: render_mirror(w, ev, name, tasks),
+            fn=lambda ev, w, name, tasks: render_mirror(w, ev, name, tasks, height_css=_TAB_HEIGHT_CSS),
             inputs=[operating_comps["events_state"], mirror_comps["weather_state"],
                     mirror_comps["name_state"], mirror_comps["tasks_state"]],
             outputs=[mirror_comps["mirror_html"]],
             show_progress="hidden",
         )
 
-    # GPIO: short press does nothing extra; hold shuts down
-    def _noop():
-        pass
-
-    def _shutdown():
-        import sys
-        print("[SmartMirror] Shutdown button held — exiting.")
-        sys.exit(0)
-
-    try:
-        ctx.gpio = start_gpio(
-            ctx.cfg,
-            on_short_press=_noop,
-            on_hold_press=_shutdown,
-        )
-    except Exception as exc:
-        print(f"[GPIO] Could not initialise button: {exc} — running without hardware button")
+    # The shutdown button (GPIO20) is handled entirely at the kernel level via
+    # dtoverlay=gpio-shutdown in /boot/firmware/config.txt — pressing it triggers
+    # a real `poweroff` through systemd-logind, no Python polling involved.
+    # (Python-side GPIO polling on this same pin would conflict with the
+    # kernel's gpio-keys driver, which now owns it — see Docs/4_Production.md.)
 
     return demo
+
+
+_DASHBOARD_ZOOM_CSS = """
+/* Scale the dashboard UI up uniformly (Chromium-only, fine here) — but not
+   the Mirror tab, which already has its own precise vh/vmin-based sizing. */
+.gradio-container { zoom: 1.35; }
+#mirror, #mirror * { zoom: 1 !important; }
+"""
 
 
 def launch_smartmirror_dashboard(ctx: AppContext, demo: gr.Blocks) -> None:
@@ -330,5 +330,5 @@ def launch_smartmirror_dashboard(ctx: AppContext, demo: gr.Blocks) -> None:
         server_port=ctx.cfg.gradio_port,
         show_error=True,
         theme=_SM_THEME,
-        css=SM_CSS,
+        css=SM_CSS + _DASHBOARD_ZOOM_CSS,
     )

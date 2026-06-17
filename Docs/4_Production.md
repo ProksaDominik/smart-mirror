@@ -8,6 +8,52 @@ Complete [3_Next_steps.md](3_Next_steps.md) (Wi‑Fi, training, extending the ap
 
 ---
 
+## Network
+
+This Pi connects to the Wi‑Fi network **`Howest-SmartTech-Hub`**. If it ever needs to be reconnected (factory reset, new Pi, moved location), join that network — the IP addresses below are only valid while on it:
+
+- Ethernet (lab): `192.168.168.167`
+- Wi‑Fi: `10.32.2.37` (changes if the network's DHCP lease changes)
+
+Check the current IPs anytime with:
+
+```bash
+hostname -I
+```
+
+---
+
+## Autostart — what's actually configured on this Pi
+
+The generic systemd instructions in Step 2 below are kept for reference, but **this Pi does not use them**. Instead, autostart is wired through the desktop session, because the kiosk display needs an actual graphical (Wayland/labwc) session to show Chromium fullscreen on the HDMI screen — a bare systemd service can start the Python process but can't put a browser window on the physical display.
+
+What's in place:
+
+1. **`lightdm`** is configured for autologin as user `student` straight into the `rpd-labwc` desktop session (`/etc/lightdm/lightdm.conf`: `autologin-user=student`, `autologin-session=rpd-labwc`). This happens automatically on every boot — no login screen, no password.
+2. **`~/.config/labwc/autostart`** runs automatically once that desktop session starts. It first replicates the normal desktop autostart (panel, wallpaper, etc. — copied from `/etc/xdg/labwc/autostart` so nothing is lost), then launches `RPi/start_on_boot.sh` in the background.
+3. **`RPi/start_on_boot.sh`** waits for the network, starts `python -u app.py` (with `stdin` redirected to `/dev/null` — without that, anything touching stdin while backgrounded freezes the whole process with SIGTTIN), waits for port `8501` to respond, then launches Chromium in `--kiosk` fullscreen mode pointed at `http://localhost:8501`. If Chromium ever exits, it relaunches automatically.
+4. **Face recognition runs in its own always-on background thread inside `app.py`** (`ui/sm_display.py`, `_recognition_loop`) — it does **not** depend on any browser tab being open. The Pi camera capture thread, YOLO recognition, voice greeting, and calendar sync are all already running the moment `app.py` starts. The kiosk window is just a *display* for that state — opening or closing it doesn't start or stop recognition.
+5. **Auto-reset after 5 minutes**: once someone is recognised, the mirror holds their greeting/tasks for 5 minutes (`_AUTO_RESET_SEC` in `ui/sm_display.py`), then automatically resets so the next person who steps in front of the camera gets recognised fresh, with their own correctly-synced to-do list — no manual page refresh needed.
+
+End result: power on the Pi, wait about a minute, and the mirror is live on the HDMI screen with no keyboard, mouse, laptop, or SSH session ever needed. Standing in front of the camera is the only "start button."
+
+To check it's running without touching anything:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501   # 200 = kiosk server up
+tail -f /tmp/smartmirror.log                                      # live app log
+```
+
+To make manual changes during development, you still kill/relaunch like normal — the autostart only fires on boot/login, it won't fight you while you're actively working:
+
+```bash
+kill $(ps aux | grep "python -u app.py" | grep -v grep | awk '{print $2}')
+pkill -f chromium
+# edit code, then just reboot, or manually re-run RPi/start_on_boot.sh
+```
+
+---
+
 ## Step 1 — Find the Pi IP and test services
 
 Connect the Pi to Wi‑Fi if needed ([3_Next_steps.md](3_Next_steps.md) or [2_Kickoff.md](2_Kickoff.md)).

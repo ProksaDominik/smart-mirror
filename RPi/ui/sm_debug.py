@@ -11,20 +11,20 @@ from ui.smartmirror_theme import C_BORDER, C_CARD, C_CYAN, C_GREEN, C_MUTED, C_R
 
 def _status_html(msg: str) -> str:
     if msg == "idle":
-        return f'<div style="font-family:Inter,sans-serif;color:{C_MUTED};font-size:14px;">Ready.</div>'
+        return f'<div style="font-family:Bebas Neue,sans-serif;color:{C_MUTED};font-size:14px;">Ready.</div>'
     if msg == "playing":
-        return f'<div style="font-family:Inter,sans-serif;font-size:14px;color:{C_CYAN};">▶ Playing…</div>'
+        return f'<div style="font-family:Bebas Neue,sans-serif;font-size:14px;color:{C_CYAN};">▶ Playing…</div>'
     if msg == "ok":
-        return f'<div style="font-family:Inter,sans-serif;font-size:14px;color:{C_GREEN};">✔ Speakers OK</div>'
+        return f'<div style="font-family:Bebas Neue,sans-serif;font-size:14px;color:{C_GREEN};">✔ Speakers OK</div>'
     if msg == "stopped":
-        return f'<div style="font-family:Inter,sans-serif;font-size:14px;color:{C_MUTED};">⏹ Stopped</div>'
-    return f'<div style="font-family:Inter,sans-serif;font-size:14px;color:{C_RED};">✘ {msg}</div>'
+        return f'<div style="font-family:Bebas Neue,sans-serif;font-size:14px;color:{C_MUTED};">⏹ Stopped</div>'
+    return f'<div style="font-family:Bebas Neue,sans-serif;font-size:14px;color:{C_RED};">✘ {msg}</div>'
 
 
 def build_debug_tab() -> dict:
     with gr.TabItem("Debug", id="debug"):
         gr.HTML(
-            f'<div style="font-family:Inter,sans-serif;padding:18px 32px;'
+            f'<div style="font-family:Bebas Neue,sans-serif;padding:18px 32px;'
             f'border-bottom:1px solid {C_BORDER};background:{C_CARD};">'
             f'<span style="font-size:20px;font-weight:700;color:{C_WHITE};">SmartMirror</span>'
             f'<span style="font-size:16px;color:#7B2FFF;"> / Debug</span>'
@@ -36,7 +36,7 @@ def build_debug_tab() -> dict:
             with gr.Column(scale=1):
                 gr.HTML(
                     f'<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;'
-                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Inter,sans-serif;">🔊 Speakers</div>',
+                    f'color:{C_CYAN};padding:24px 0 12px;font-family:Bebas Neue,sans-serif;">🔊 Speakers</div>',
                     sanitize_html=False,
                 )
                 with gr.Row():

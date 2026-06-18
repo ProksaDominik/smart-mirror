@@ -28,8 +28,10 @@ for i in $(seq 1 60); do
     sleep 1
 done
 
-# Start the Gradio app in the background, retrying if it crashes (e.g. DB
-# still wasn't fully ready) so the kiosk never just sits dead after boot.
+# Start the Gradio app in the background, retrying if it crashes — both at
+# initial boot (e.g. DB still wasn't ready) and for the rest of the session
+# (e.g. an unhandled exception later on). This loop never exits, so app.py
+# is always supervised, not just during startup.
 # stdin MUST be redirected to /dev/null — without it, anything that touches
 # stdin while the process is backgrounded gets SIGTTIN'd and the app freezes
 # silently (looks like a hang, not a crash).
@@ -37,11 +39,10 @@ done
     cd "$REPO_DIR"
     source "$VENV_ACTIVATE"
     while true; do
-        if curl -s --max-time 1 "http://localhost:${KIOSK_PORT}" > /dev/null 2>&1; then
-            break
+        if ! curl -s --max-time 1 "http://localhost:${KIOSK_PORT}" > /dev/null 2>&1; then
+            python -u app.py < /dev/null > "$LOG" 2>&1
+            echo "[boot] app.py exited — retrying in 3s..." >> "$LOG"
         fi
-        python -u app.py < /dev/null > "$LOG" 2>&1
-        echo "[boot] app.py exited — retrying in 3s..." >> "$LOG"
         sleep 3
     done
 ) &

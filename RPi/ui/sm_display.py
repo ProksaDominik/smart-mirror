@@ -402,7 +402,7 @@ def _render_right(weather_data: dict | None, status: dict) -> str:
 _DRAW_CONF      = 0.30   # min conf to draw a box at all
 _GREET_CONF     = 0.30   # min conf for a frame to count as any vote (known or unknown)
 _ID_CONF        = 0.70   # min conf to vote FOR A SPECIFIC NAME; below this → "__unknown__"
-_PER_NAME_CONF  = {}  # per-name confidence overrides, if a specific person needs a different bar
+_PER_NAME_CONF  = {"Radu": 0.55, "Liviu": 0.55}  # lower bar for names the model is less confident on
 _MIN_FACE_FRAC  = 0.05   # face narrower than 5 % of frame → "come closer"
 _ZOOM_FACE_FRAC = 0.20   # face narrower than 20 % of frame → re-run on zoomed crop
 _VOTE_WINDOW    = 10     # how many recent frames we remember
@@ -420,15 +420,19 @@ _scan_state: dict = {"done": False, "initialized": False}
 
 
 def reset_scan_state() -> None:
-    """Called on every page load to wipe recognition state (but keep model in memory for speed)."""
+    """Called on every page load (and on button press / auto-reset) to wipe
+    recognition state (but keep model in memory for speed)."""
     global _current_user, _confirmed_name, _confirmed_at
-    
+
     # Only clear voting and confirmation state — do NOT unload the model
     # Keeping the model in memory prevents slow reload on page refresh
     _votes.clear()
     _confirmed_name = None
     _confirmed_at = 0.0
     _current_user = ""
+
+    from ui import music as _music
+    _music.stop()
     _scan_state["done"] = False
     _scan_state["initialized"] = False
     print("[YOLO] Recognition state reset (model kept in memory for speed)")
@@ -535,12 +539,19 @@ def _predict_frame(
 _last_recognized_at: float = 0.0
 _PERIODS = ("Good Morning, ", "Good Afternoon, ", "Good Evening, ")
 
+# Updated every loop tick regardless of confirmation state — "is anyone
+# (known or unknown) actually visible right now?" Unlike _current_user
+# (which intentionally stays set for _AUTO_RESET_SEC so greeting/tasks don't
+# flicker away), this is for things that should react immediately to real
+# presence, like turning the screen on/off.
+_face_present: bool = False
+
 
 def _recognition_loop() -> None:
     """Runs continuously in the background — independent of any browser tab being
     open. Drives _current_user so the kiosk works standalone, with no dashboard
     session needed to 'keep recognition alive'."""
-    global _current_user, _last_recognized_at
+    global _current_user, _last_recognized_at, _face_present
 
     while True:
         time.sleep(_RECOG_INTERVAL)
@@ -552,14 +563,17 @@ def _recognition_loop() -> None:
                 reset_scan_state()
                 continue
 
-            if _current_user:
-                continue  # already confirmed and within the hold window
-
             img = get_latest_frame()
             if img is None:
+                _face_present = False
                 continue
 
             _, summary = _predict_frame(img)
+            _face_present = summary not in ("No one detected", "Come closer to the camera")
+
+            if _current_user:
+                continue  # already confirmed and within the hold window — skip re-greeting
+
             print(f"[RECOG] summary={summary!r}")
 
             if summary == "Unregistered face recognized":
@@ -584,21 +598,22 @@ def _start_recognition_thread() -> None:
     t.start()
 
 
-_BUTTON_DEVICE_PATH = "/dev/input/event0"  # GPIO20 button, via dtoverlay=gpio-shutdown
+_BUTTON_DEVICE_PATH = "/dev/input/by-path/platform-pwr_button-event"  # Pi 5's dedicated power button
 _BUTTON_LONG_PRESS_SEC = 1.5  # presses held longer than this are shutdown territory
 
 
 def _button_listener_loop() -> None:
     """Short press of the physical button resets recognition, ready for a new
-    face — same effect as a manual kiosk page refresh, but from the button.
-    Long-press shutdown is handled entirely by systemd-logind
-    (HandlePowerKeyLongPress=poweroff in /etc/systemd/logind.conf) — that
-    happens independently of this thread, so it still works even if app.py
-    has crashed."""
+    face. Long press shuts the Pi down.
+
+    Cannot use an exclusive grab (EVIOCGRAB) here — labwc itself holds this
+    device open at all times (Wayland compositors must own raw input
+    devices to function), so a second exclusive grab always fails with
+    EBUSY. We just read non-exclusively alongside it instead."""
     try:
         import evdev
     except ImportError:
-        print("[Button] evdev not installed — physical button reset disabled")
+        print("[Button] evdev not installed — physical button disabled")
         return
 
     try:
@@ -619,7 +634,14 @@ def _button_listener_loop() -> None:
             if held < _BUTTON_LONG_PRESS_SEC:
                 print(f"[Button] Short press ({held:.2f}s) — resetting, ready for a new face")
                 reset_scan_state()
-            # else: long press — logind already handles poweroff independently
+            else:
+                print(f"[Button] Long press ({held:.2f}s) — shutting down")
+                import subprocess
+                subprocess.Popen(
+                    ["sudo", "poweroff"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
 
 
 def _start_button_listener_thread() -> None:
@@ -628,11 +650,13 @@ def _start_button_listener_thread() -> None:
 
 
 def _start_screen_power_thread() -> None:
-    """Disabled: toggling the physical HDMI output via wlr-randr left this
-    panel unable to wake back up reliably (confirmed on hardware — every
-    software layer reported success but the screen stayed dark). The
-    content-level blank black screen in render_mirror() already gives the
-    same "looks off" effect without this risk, so that's all we rely on."""
+    """Disabled by choice: real HDMI signal cutoff (via hardware/display_power.py,
+    wlr-randr --off/--on) works correctly on this hardware, but the monitor
+    shows its own built-in "No Signal" message while off — that's the
+    monitor's firmware, not something software can suppress. Decided to
+    keep the signal always on and rely purely on the black content page in
+    render_mirror() (when no face is present) instead, so nothing but black
+    is ever shown — at the cost of not actually saving power."""
     pass
 
 
@@ -752,18 +776,34 @@ def _welcome_audio(name: str) -> None:
     """Speak a personalised greeting then read today's tasks. Runs in a daemon thread."""
     try:
         from ui import voice as _voice
+        from ui import music as _music
         import time
+
+        # Person-specific background track, looped until button press / auto-reset
+        # (see reset_scan_state()) — not stopped when the speech finishes.
+        _music.play_under(_music.track_for_person(name))
 
         # Greeting — plays while the calendar sync runs in parallel
         _voice.speak(f"{_time_period()} sir!")
-
-        # Wait briefly for the calendar sync to finish and populate the DB
-        time.sleep(0.5)
 
         # Read today's tasks
         try:
             import db, random
             from datetime import date as _date
+
+            # Sync the calendar directly here instead of waiting on the
+            # separate 2s-polling sync timer (a fixed sleep was racing
+            # against that timer's actual network call and often lost,
+            # leaving the voice reading a stale/empty task list).
+            try:
+                from pathlib import Path as _Path
+                from ui.sm_operating import try_google_calendar_sync, events_to_cal_tasks
+                base_dir = _Path(__file__).resolve().parent.parent
+                events, _msg = try_google_calendar_sync(base_dir, name)
+                db.replace_calendar_tasks(events_to_cal_tasks(events))
+            except Exception as sync_exc:
+                print(f"[Welcome audio sync] {sync_exc}")
+
             today = _date.today().isoformat()
             tasks = [
                 t for t in db.load_tasks()
@@ -842,9 +882,8 @@ def _welcome_audio(name: str) -> None:
         except Exception as exc:
             print(f"[Welcome audio tasks] {exc}")
 
-        # Stop music once all speech is done
-        from ui import music as _music
-        _music.stop()
+        # Music keeps looping after speech ends — stopped only by a button
+        # press or auto-reset (reset_scan_state()), not here.
     except Exception as exc:
         print(f"[Welcome audio] {exc}")
 
@@ -854,12 +893,11 @@ def _unknown_audio() -> None:
     from ui import music as _music
     try:
         from ui import voice as _voice
-        try:
-            _voice.speak("I don't recognise you. Please register your face to use the mirror.")
-        finally:
-            _music.stop()
+        _music.play_under(_music.track_for_person("__unknown__"))
+        _voice.speak("I don't recognise you. Please register your face to use the mirror.")
+        # Music keeps looping after speech ends — stopped only by a button
+        # press or auto-reset (reset_scan_state()), not here.
     except Exception as exc:
-        _music.stop()
         print(f"[Unknown audio] {exc}")
 
 
@@ -945,3 +983,9 @@ def wire_display_callbacks(comps: dict, ctx: AppContext, op_comps: dict | None =
 _start_recognition_thread()
 _start_screen_power_thread()
 _start_button_listener_thread()
+
+
+
+#done
+
+#done

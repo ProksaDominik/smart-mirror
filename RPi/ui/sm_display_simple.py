@@ -94,7 +94,7 @@ def render_mirror(
         greeting_html = ""
 
     events_html = ""
-    for ev in events[:3]:
+    for ev in events[:6]:
         t      = ev.get("time", "")
         title  = ev.get("title", "")
         active = ev.get("active", False)

@@ -105,3 +105,17 @@ Questions for this conversation:
 This is the feedback on my questions.
 
 - Feedback 1: we plugged in the power for the speakers to the different source and it worked, so the pi didnt have enough power to power the speakers. 
+
+
+
+ mvp4 (Date: 16/06/2026)
+
+Lecturer: Claudia,Paula,Pitrijan
+
+Questions for this conversation: 
+
+- Question 1: what should I improve ?  
+
+This is the feedback on my questions.
+
+- Feedback 1: I need t omake it more personalized text bigger and each person has to have its own song there and a theme.

@@ -1,4 +1,4 @@
-# Smart Mirror — a morning assistant that knows who you are
+# Smart Mirror: a morning assistant that knows who you are
 
 ![The mirror recognising its user and showing the time, weather and to-do list](media/demo.gif)
 
@@ -6,7 +6,7 @@
 
 A Raspberry Pi mirror that recognises the person standing in front of it and
 shows *their* day: time, weather and their Google Calendar to-do list on a
-10.1-inch screen, with a voice assistant you can talk to — no phone needed on a
+10.1-inch screen, with a voice assistant you can talk to. No phone needed on a
 busy morning.
 
 Built in four weeks (May–June 2026) as my first-year Project One at Howest
@@ -15,7 +15,7 @@ Built in four weeks (May–June 2026) as my first-year Project One at Howest
 ## Results
 
 **Face recognition:** a YOLO26n model, fine-tuned from the pretrained
-checkpoint on my own dataset — about 3,000 photos of 7 people, labelled in
+checkpoint on my own dataset: about 3,000 photos of 7 people, labelled in
 Roboflow, 100 epochs on Google Colab. Scores of the model running on the mirror,
 on the validation photos of its training run:
 
@@ -25,25 +25,21 @@ on the validation photos of its training run:
 
 - **Precision:** of the faces it names, how many are the right person.
 - **Recall:** of the faces in the photos, how many it finds.
-- **mAP50:** the standard detection score — 100% means it finds and names everyone.
-
-
+- **mAP50:** the standard detection score; 100% means it finds and names everyone.
 
 The model is small (2.4 M parameters) and takes about 35 ms per photo on a
 laptop CPU.
 
 ## What it does
 
-1. **Recognises you** — a camera on the mirror runs the face model; a green
+1. **Recognises you:** a camera on the mirror runs the face model; a green
    light for a known person, red for an unknown one.
-2. **Shows your day** — time, the weather, and your own Google Calendar to-do
+2. **Shows your day:** time, the weather, and your own Google Calendar to-do
    list (read-only), on a 10.1-inch touch screen.
-3. **Talks with you** — speech-to-text runs on the Pi itself (faster-whisper);
+3. **Talks with you:** speech-to-text runs on the Pi itself (faster-whisper);
    replies are spoken with ElevenLabs, with Microsoft Edge voices as a fallback.
-4. **Runs on its own** — starts in kiosk mode when the Pi boots, with a button,
+4. **Runs on its own:** starts in kiosk mode when the Pi boots, with a button,
    buzzer, LCD and 7-segment display for status.
-
-
 
 | Part | Where |
 |---|---|

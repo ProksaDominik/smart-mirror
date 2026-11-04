@@ -1,8 +1,8 @@
 # Smart Mirror — a morning assistant that knows who you are
 
-![The mirror greeting its user with the time, weather and to-do list](docs/mirror.jpg)
+![The mirror recognising its user and showing the time, weather and to-do list](media/demo.gif)
 
-▶ **[Watch the 1-minute demo](docs/demo.mp4)**
+▶ **[The full 1-minute demo video](media/demo.mp4)** (click "View raw" to play or download)
 
 A Raspberry Pi mirror that recognises the person standing in front of it and
 shows *their* day: time, weather and their Google Calendar to-do list on a

@@ -220,3 +220,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# never commit: Google credentials and user tokens, trained face models, face photos, music
+credentials.json
+RPi/data/tokens/
+*.pt
+*.mp3
+Laptop/smartmirror-*/
+.env

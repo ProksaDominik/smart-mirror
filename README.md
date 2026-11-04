@@ -1,133 +1,84 @@
-# Project Title
+# Smart Mirror — a morning assistant that knows who you are
 
-**FIRST & LAST NAME:** Dominik Proksa
+A Raspberry Pi mirror that recognises the person standing in front of it and
+shows *their* day: time, weather and their Google Calendar to-do list on a
+10.1-inch screen, with a voice assistant you can talk to — no phone needed on a
+busy morning.
 
-**Sparring Partner:** Michal Heles
+Built in four weeks (May–June 2026) as my first-year Project One at Howest
+(Creative Technologies & AI), starting from the course's Raspberry Pi template.
 
-**Project Summary in max 10 words:** 
-SmartMirror – Morning Assistant
+## Results
 
-SmartMirror is an AI-powered Raspberry Pi mirror that uses YOLO face recognition to identify users and instantly display their personalised time, weather, and Google Calendar to-do list on a 10.1-inch LCD — giving busy people all the info they need to start their day, hands-free, without touching their phone.
+**Face recognition:** a YOLO26n model, fine-tuned from the pretrained
+checkpoint on my own dataset — about 3,000 photos of 7 people, labelled in
+Roboflow, 100 epochs on Google Colab. Scores of the model running on the mirror,
+on the validation photos of its training run:
 
----
+| Precision | Recall | mAP50 | mAP50-95 |
+|---:|---:|---:|---:|
+| 97.5% | 99.1% | 99.0% | 68.3% |
 
-See [PD](PD.md)
+- **Precision:** of the faces it names, how many are the right person.
+- **Recall:** of the faces in the photos, how many it finds.
+- **mAP50:** the standard detection score — 100% means it finds and names everyone.
 
----
+**Be careful with these numbers:** the validation photos come from the same
+photo sessions as the training photos, so they are easier than real life. In
+front of the mirror — other light, other angles, other clothes — accuracy will
+be lower; that was not measured separately.
 
-For Docs, see [Docs/README.md](Docs/README.md)
+The model is small (2.4 M parameters) and takes about 35 ms per photo on a
+laptop CPU.
 
+## What it does
 
+1. **Recognises you** — a camera on the mirror runs the face model; a green
+   light for a known person, red for an unknown one.
+2. **Shows your day** — time, the weather, and your own Google Calendar to-do
+   list (read-only), on a 10.1-inch touch screen.
+3. **Talks with you** — speech-to-text runs on the Pi itself (faster-whisper);
+   replies are spoken with ElevenLabs, with Microsoft Edge voices as a fallback.
+4. **Runs on its own** — starts in kiosk mode when the Pi boots, with a button,
+   buzzer, LCD and 7-segment display for status.
 
-1. Project identity version: 1.3
+## What I built, and what came from the template
 
-Working Title
+The course gave every student the same Raspberry Pi starting point: the `Docs/`
+folder, camera inputs, the model registry and the basic hardware layer. My work
+on top of it:
 
-SmartMirror - Morning assistent
+| Part | Where |
+|---|---|
+| The mirror interface: display, operating screen, dashboard, kiosk mode, theme | [`RPi/ui/`](RPi/ui/) (`sm_*.py`, `smartmirror_*.py`) |
+| The voice assistant | [`RPi/ui/voice.py`](RPi/ui/voice.py) |
+| Users and their calendars | [`RPi/db.py`](RPi/db.py), [`RPi/ui/sm_database.py`](RPi/ui/sm_database.py) |
+| Training and testing the face model | [`Laptop/yolo.ipynb`](Laptop/yolo.ipynb) |
+| Buzzer, 7-segment display, LCD status | [`RPi/hardware/`](RPi/hardware/) |
+| Project definition | [`PD.md`](PD.md) |
 
-Student Name
+## Hardware
 
-Dominik Proksa
+Raspberry Pi with a camera (CSI or USB), a 10.1-inch HDMI touch screen, LEDs, a
+buzzer, a button, an LCD and a speaker.
 
-Sparring Partner
+## Privacy
 
-Michal Heles
+The face photos, the trained model and the Google credentials are **not** in
+this repository: the model recognises real people. To run it yourself, train
+your own model and put it at `RPi/ai/best.pt`.
 
-Project Type
+## Running it
 
-Vision
+On the Raspberry Pi:
 
-2. Concept & Impact
+```bash
+cd RPi
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# Google Calendar: a credentials.json from Google Cloud (Calendar API, read-only) next to app.py
+# your trained face model: RPi/ai/best.pt
+./launch_mirror.sh          # or ./start_kiosk.sh for full-screen kiosk mode
+```
 
-Objective: Develop a working AI prototype for people who don't want to reach for their phone on busy mornings, so they have all the information to start their day on the mirror, and for people that want to schedule tasks and make a to-do list for every day.
-
-Target Group: Busy people, students, and families with hectic morning routines who need quick access to personalized daily info without grabbing their phone.
-
-Core Problem: On rushed mornings, people fumble for phones to check time, weather, calendar, and tasks, breaking their morning flow and wasting precious minutes.
-Key Question: how can a gadget(mirror) help people have quicker mornings?
-Impact: Makes mornings faster with quick, hands-free info (saves 10-15 min daily), cuts phone use.
-3. AI & Data Pipeline
-
-A. Method & Data
-
-Dataset: It won't take 100+ pictures; just the scan of the face - YOLO26 model will be scanning if there is a face and whos face it is
-
-Classes: 6 unique faces(me and my colleagues or friends)
-Volume: photos of each persons face
-B. Training & Export
-
-Yolo 26 - take 100 photos of each person
-
-4. Hardware & Makerlab plan
-
-A. Mandatory Hardware
-
--10.1-inch HDMI touch LCD for to-do list, time, weather, and status icons
-
-- lights up green for recognition success, red for failure, speaker for voice recordings (good morning, good evening…)
-
-- button
-
-B. Build Quality (Makerlab)
-
--Laser-cut wooden frame with acrylic one-way mirror
-
--all USB/HDMI/power routed through back panel glands
-
--low-voltage only
-
--matte black wood, flush glass, hidden cables, LED accents for modern smart-home vibe
-
-5. Software & Visualisation
-
-About & Onboarding:
-]
-Operating: camera readings and a button
--
-Debugging:
--GPIO toggle for LED for camera test
-
-B. Backend & Data
-
-Users - name and ID of each person.
-Face data - pretrained face label or model file for each user.
-To-do list - tasks for each user. - Google Calendar API to sync calendar with to do list.
-Forecasts - Google Forecast API to provide live weather updates based on the user's location
-Recognition logs - who was detected and when.
-Settings -refresh time, and display settings.
-Gradio pages:
-
-About - explains what the mirror does and how it works.
-
-Data - shows the detected user, weather, and task data.
-
-Operating - lets the user manage the to-do list manually.
-
-Debugging - tests the camera, model, database, and display.
-
-We do not need any keyboard because it will all be controlled by phone . All syncs with our google cloud.
-
-User → Updates Google Calendar on their Phone.
-
-Phone → Syncs to Google Cloud.
-
-Mirror (Raspberry Pi) → Detects Face.
-
-Mirror → Requests data from Google API for that specific ID.
-
-Mirror → Displays the info on the LCD.
-
-6. System Architecture (Block Diagram)
-
-Paste your block diagram here following these color codes
-
-Red: (Raspberry Pi) or Laptop
-Green: Sensors
-Yellow: Actuators
-Grey: Display
-Blue: Power supply
-Note: Clearly label where the AI is running and what it is doing
-
-
-
-No ai was used
+Setup details from the course template: [`Docs/`](Docs/README.md).

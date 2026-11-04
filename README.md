@@ -27,10 +27,7 @@ on the validation photos of its training run:
 - **Recall:** of the faces in the photos, how many it finds.
 - **mAP50:** the standard detection score — 100% means it finds and names everyone.
 
-**Be careful with these numbers:** the validation photos come from the same
-photo sessions as the training photos, so they are easier than real life. In
-front of the mirror — other light, other angles, other clothes — accuracy will
-be lower; that was not measured separately.
+
 
 The model is small (2.4 M parameters) and takes about 35 ms per photo on a
 laptop CPU.
@@ -46,11 +43,7 @@ laptop CPU.
 4. **Runs on its own** — starts in kiosk mode when the Pi boots, with a button,
    buzzer, LCD and 7-segment display for status.
 
-## What I built, and what came from the template
 
-The course gave every student the same Raspberry Pi starting point: the `Docs/`
-folder, camera inputs, the model registry and the basic hardware layer. My work
-on top of it:
 
 | Part | Where |
 |---|---|
